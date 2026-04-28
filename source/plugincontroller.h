@@ -1,9 +1,18 @@
 #pragma once
 
 #include "public.sdk/source/vst/vsteditcontroller.h"
+#include "public.sdk/source/vst/vstparameters.h"
 #include "pluginview.h"
 
 namespace VSTVibe2 {
+
+// Parameter IDs for oscillator volumes
+enum ParamID {
+    kSineVolumeID = 0,
+    kSquareVolumeID = 1,
+    kTriangleVolumeID = 2,
+    kSawVolumeID = 3
+};
 
 class VSTVibe2Controller : public Steinberg::Vst::EditController {
 public:
@@ -19,6 +28,7 @@ public:
     Steinberg::IPlugView* PLUGIN_API createView(const char* name) override;
 
     void setPluginView(PluginView* view) { pluginView = view; }
+    PluginView* getPluginView() const { return pluginView; }
 
 private:
     PluginView* pluginView = nullptr;
