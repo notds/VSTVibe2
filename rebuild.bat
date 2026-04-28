@@ -2,8 +2,6 @@
 REM VSTVibe2 Clean & Rebuild Script
 REM This script removes the build directory and performs a clean build
 
-setlocal enabledelayedexpansion
-
 echo ======================================
 echo VSTVibe2 Clean & Rebuild
 echo ======================================

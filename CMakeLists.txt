@@ -60,7 +60,7 @@ add_library(VSTVibe2 SHARED
 
 target_compile_definitions(VSTVibe2 PRIVATE NOMINMAX)
 target_include_directories(VSTVibe2 PRIVATE ${VST3_SDK_ROOT})
-target_link_libraries(VSTVibe2 PRIVATE vst3_sdk vst3_base)
+target_link_libraries(VSTVibe2 PRIVATE vst3_sdk vst3_base gdiplus.lib)
 
 if(MSVC)
   target_compile_options(VSTVibe2 PRIVATE /EHsc /W4)
