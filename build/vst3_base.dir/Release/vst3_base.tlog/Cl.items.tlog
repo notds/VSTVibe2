@@ -1,0 +1,10 @@
+C:\code\VST_SDK\vst3sdk\base\source\fobject.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\fobject.obj
+C:\code\VST_SDK\vst3sdk\base\source\fbuffer.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\fbuffer.obj
+C:\code\VST_SDK\vst3sdk\base\source\fstreamer.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\fstreamer.obj
+C:\code\VST_SDK\vst3sdk\base\source\fstring.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\fstring.obj
+C:\code\VST_SDK\vst3sdk\base\source\baseiids.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\baseiids.obj
+C:\code\VST_SDK\vst3sdk\base\source\updatehandler.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\updatehandler.obj
+C:\code\VST_SDK\vst3sdk\base\source\timer.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\timer.obj
+C:\code\VST_SDK\vst3sdk\pluginterfaces\base\funknown.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\funknown.obj
+C:\code\VST_SDK\vst3sdk\pluginterfaces\base\ustring.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\ustring.obj
+C:\code\VST_SDK\vst3sdk\pluginterfaces\base\coreiids.cpp;C:\code\C++\VSTVibe2\build\vst3_base.dir\Release\coreiids.obj

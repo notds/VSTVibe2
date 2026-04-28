@@ -1,0 +1,140 @@
+#include "pluginprocessor.h"
+#include "pluginterfaces/vst/ivstevents.h"
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+namespace VSTVibe2 {
+
+VSTVibe2Processor::VSTVibe2Processor() {
+    setControllerClass(kVSTVibe2ControllerUID);
+}
+
+Steinberg::tresult PLUGIN_API VSTVibe2Processor::initialize(Steinberg::FUnknown* context) {
+    Steinberg::tresult result = AudioEffect::initialize(context);
+    if (result != Steinberg::kResultOk) {
+        return result;
+    }
+
+    addEventInput(STR16("MIDI Input"), 1);
+    addAudioOutput(STR16("Stereo Out"), Steinberg::Vst::SpeakerArr::kStereo);
+    return Steinberg::kResultOk;
+}
+
+Steinberg::tresult PLUGIN_API VSTVibe2Processor::setState(Steinberg::IBStream* /*state*/) {
+    return Steinberg::kResultOk;
+}
+
+Steinberg::tresult PLUGIN_API VSTVibe2Processor::getState(Steinberg::IBStream* /*state*/) {
+    return Steinberg::kResultOk;
+}
+
+Steinberg::tresult PLUGIN_API VSTVibe2Processor::setupProcessing(Steinberg::Vst::ProcessSetup& setup) {
+    sampleRate = setup.sampleRate;
+    return AudioEffect::setupProcessing(setup);
+}
+
+float VSTVibe2Processor::generateSineWave(double phaseVal) {
+    return static_cast<float>(std::sin(2.0 * M_PI * phaseVal));
+}    
+  
+
+float VSTVibe2Processor::generateSquareWave(double phaseVal) {
+    // Normalize phase to [0, 1)
+    double normalizedPhase = phaseVal - std::floor(phaseVal);
+    return (normalizedPhase < 0.5) ? 1.0f : -1.0f;
+}
+
+float VSTVibe2Processor::generateTriangleWave(double phaseVal) {
+    // Normalize phase to [0, 1)
+    double normalizedPhase = phaseVal - std::floor(phaseVal);
+    if (normalizedPhase < 0.25) {
+        return -1.0f + 4.0f * normalizedPhase;
+    } else if (normalizedPhase < 0.75) {
+        return 1.0f - 4.0f * (normalizedPhase - 0.25f);
+    } else {
+        return -1.0f + 4.0f * (normalizedPhase - 0.75f);
+    }
+}
+
+float VSTVibe2Processor::generateSawWave(double phaseVal) {
+    // Normalize phase to [0, 1)
+    double normalizedPhase = phaseVal - std::floor(phaseVal);
+    return -1.0f + 2.0f * normalizedPhase;
+}
+
+float VSTVibe2Processor::mixOscillators(double phaseVal) {
+    float sine = generateSineWave(phaseVal) * oscillatorVolumes[0];
+    float square = generateSquareWave(phaseVal) * oscillatorVolumes[1];
+    float triangle = generateTriangleWave(phaseVal) * oscillatorVolumes[2];
+    float saw = generateSawWave(phaseVal) * oscillatorVolumes[3];
+    
+    // Mix all oscillators and normalize
+    return (sine + square + triangle + saw) * 0.25f;
+}
+
+Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::ProcessData& data) {
+    // Handle MIDI events
+    if (data.inputEvents) {
+        Steinberg::int32 eventCount = data.inputEvents->getEventCount();
+        for (Steinberg::int32 i = 0; i < eventCount; ++i) {
+            Steinberg::Vst::Event event;
+            if (data.inputEvents->getEvent(i, event) != Steinberg::kResultOk) {
+                continue;
+            }
+
+            if (event.type == Steinberg::Vst::Event::kNoteOnEvent) {
+                // Convert MIDI note to frequency (A4 = 440 Hz, MIDI note 69)
+                int midiNote = event.noteOn.pitch;
+                currentFrequency = 440.0f * std::pow(2.0f, (midiNote - 69) / 12.0f);
+                noteActive = true;
+            } else if (event.type == Steinberg::Vst::Event::kNoteOffEvent) {
+                noteActive = false;
+            }
+        }
+    }
+
+    if (data.numOutputs == 0) {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::Vst::AudioBusBuffers& output = data.outputs[0];
+    float** channels = output.channelBuffers32;
+    if (!channels) {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::int32 numSamples = data.numSamples;
+    Steinberg::int32 numChannels = output.numChannels;
+
+    // Generate audio
+    for (Steinberg::int32 sample = 0; sample < numSamples; ++sample) {
+        float sampleValue = 0.0f;
+        
+        if (noteActive) {
+            sampleValue = mixOscillators(phase);
+            phase += currentFrequency / sampleRate;
+            
+            // Wrap phase to prevent overflow
+            if (phase >= 1.0) {
+                phase -= 1.0;
+            }
+        }
+
+        // Write to all channels
+        for (Steinberg::int32 channel = 0; channel < numChannels; ++channel) {
+            channels[channel][sample] = sampleValue;
+        }
+    }
+
+    return Steinberg::kResultOk;
+}
+
+// Public factory functions
+Steinberg::FUnknown* createProcessorInstance(void*) {
+    return static_cast<Steinberg::Vst::IAudioProcessor*>(new VSTVibe2Processor());
+}
+
+} // namespace VSTVibe2

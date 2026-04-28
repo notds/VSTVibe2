@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C++ Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Release/VSTVibe.vst3",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "VST3_SDK_PATH",
+                    "value": "C:\\code\\VST_SDK\\vst3sdk"
+                }
+            ],
+            "externalConsole": false
+        }
+    ]
+}

@@ -1,0 +1,5 @@
+C:/code/C++/VSTVibe2/build/CMakeFiles/vst3_base.dir
+C:/code/C++/VSTVibe2/build/CMakeFiles/vst3_sdk.dir
+C:/code/C++/VSTVibe2/build/CMakeFiles/VSTVibe2.dir
+C:/code/C++/VSTVibe2/build/CMakeFiles/ALL_BUILD.dir
+C:/code/C++/VSTVibe2/build/CMakeFiles/ZERO_CHECK.dir

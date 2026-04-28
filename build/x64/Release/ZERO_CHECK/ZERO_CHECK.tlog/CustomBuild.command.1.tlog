@@ -1,0 +1,10 @@
+^C:\CODE\C++\VSTVIBE2\BUILD\CMAKEFILES\781DA0EA5CB26DE8EBA4CED1475B87D2\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/code/C++/VSTVibe2 -BC:/code/C++/VSTVibe2/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/code/C++/VSTVibe2/build/VSTVibe2.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

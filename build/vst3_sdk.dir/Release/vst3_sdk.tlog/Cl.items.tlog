@@ -1,0 +1,12 @@
+C:\code\VST_SDK\vst3sdk\public.sdk\source\common\commoniids.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\commoniids.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\common\pluginview.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\pluginview.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstcomponentbase.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstcomponentbase.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstcomponent.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstcomponent.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstaudioeffect.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstaudioeffect.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstbus.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstbus.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstparameters.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstparameters.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vsteditcontroller.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vsteditcontroller.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\vst\vstinitiids.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\vstinitiids.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\main\pluginfactory.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\pluginfactory.obj
+C:\code\VST_SDK\vst3sdk\public.sdk\source\main\dllmain.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\dllmain.obj
+C:\code\VST_SDK\vst3sdk\base\thread\source\flock.cpp;C:\code\C++\VSTVibe2\build\vst3_sdk.dir\Release\flock.obj
