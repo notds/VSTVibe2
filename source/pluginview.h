@@ -40,9 +40,11 @@ private:
     std::vector<uint32_t> pixelBuffer;
     std::vector<Knob> knobs;
     int draggedKnobIndex = -1;
+    int lastMouseY = -1;
     std::vector<uint32_t> dialImage;
     int dialWidth = 0;
     int dialHeight = 0;
+    WNDPROC originalWindowProc = nullptr;
     
     void drawToWindow();
     void drawTextToWindow(HDC hdc, const char* text, int x, int y, uint32_t color);
@@ -54,6 +56,11 @@ private:
     int getKnobAtPosition(int x, int y) const;
     void updateKnobValue(int knobIndex, int y);
     bool loadDialImage();
+    void invalidateRect();
+    
+    // Friend function for window procedure
+    friend LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+    LRESULT onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 };
 
 } // namespace VSTVibe2

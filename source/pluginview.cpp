@@ -1,5 +1,6 @@
 #include "pluginview.h"
 #include <windows.h>
+#include <windowsx.h>
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
@@ -16,12 +17,26 @@ using namespace Gdiplus;
 namespace VSTVibe2 {
 
 static ULONG_PTR gdiplusToken = 0;
+static PluginView* g_pluginViewInstance = nullptr;
+
+// Global window procedure stub
+LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (g_pluginViewInstance) {
+        return g_pluginViewInstance->onWindowMessage(hwnd, message, wParam, lParam);
+    }
+    return DefWindowProc(hwnd, message, wParam, lParam);
+}
 
 PluginView::PluginView()
     : Steinberg::CPluginView() {
     viewRect.right = 600;
     viewRect.bottom = 400;
-    pixelBuffer.resize(600 * 400, 0xFFFFFFFF);
+    pixelBuffer.resize(600 * 400);
+    
+    // Initialize white background (BGR format)
+    for (size_t i = 0; i < pixelBuffer.size(); ++i) {
+        pixelBuffer[i] = 0x00FFFFFF;  // White in BGR
+    }
     
     // Initialize GDI+
     GdiplusStartupInput gdiplusStartupInput;
@@ -68,20 +83,29 @@ bool PluginView::loadDialImage() {
     }
     
     if (!pBitmap || pBitmap->GetLastStatus() != Ok) {
-        // Fallback: create a simple circular dial
+        // Fallback: create a visible dial with gradient
         dialWidth = 80;
         dialHeight = 80;
-        dialImage.resize(dialWidth * dialHeight, 0xFFCCCCCC);
-        // Draw a simple circle pattern
+        dialImage.resize(dialWidth * dialHeight);
+        
         int cx = dialWidth / 2;
         int cy = dialHeight / 2;
         int radius = 35;
+        
+        // Draw circular gradient dial
         for (int y = 0; y < dialHeight; ++y) {
             for (int x = 0; x < dialWidth; ++x) {
                 int dx = x - cx;
                 int dy = y - cy;
-                if (dx * dx + dy * dy <= radius * radius) {
-                    dialImage[y * dialWidth + x] = 0xFF999999;
+                double dist = std::sqrt(dx * dx + dy * dy);
+                
+                if (dist <= radius) {
+                    // Gray dial body
+                    uint8_t gray = static_cast<uint8_t>(200 - (dist / radius) * 50);
+                    dialImage[y * dialWidth + x] = (gray << 16) | (gray << 8) | gray;
+                } else {
+                    // Transparent outside
+                    dialImage[y * dialWidth + x] = 0x00000000;
                 }
             }
         }
@@ -92,12 +116,21 @@ bool PluginView::loadDialImage() {
     dialHeight = pBitmap->GetHeight();
     dialImage.resize(dialWidth * dialHeight);
     
-    // Convert bitmap to ARGB format
+    // Convert bitmap to BGR format for Windows DIB
     for (int y = 0; y < dialHeight; ++y) {
         for (int x = 0; x < dialWidth; ++x) {
             Color pixelColor;
             pBitmap->GetPixel(x, y, &pixelColor);
-            dialImage[y * dialWidth + x] = pixelColor.GetValue();
+            
+            // GDI+ returns ARGB, convert to BGR for SetDIBitsToDevice
+            uint32_t argb = pixelColor.GetValue();
+            uint32_t a = (argb >> 24) & 0xFF;
+            uint32_t r = (argb >> 16) & 0xFF;
+            uint32_t g = (argb >>  8) & 0xFF;
+            uint32_t b = (argb >>  0) & 0xFF;
+            
+            // Store as ARGB (we'll handle it in rendering)
+            dialImage[y * dialWidth + x] = (a << 24) | (r << 16) | (g << 8) | b;
         }
     }
     
@@ -121,6 +154,12 @@ Steinberg::tresult PLUGIN_API PluginView::attached(void* parent, const char* typ
     }
     
     platformWindow = parent;
+    g_pluginViewInstance = this;
+    
+    // Subclass the window for mouse event handling
+    HWND hwnd = static_cast<HWND>(platformWindow);
+    originalWindowProc = (WNDPROC)SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)WindowProcStub);
+    
     render();
     drawToWindow();
     return Steinberg::kResultTrue;
@@ -138,7 +177,8 @@ Steinberg::tresult PLUGIN_API PluginView::onSize(Steinberg::ViewRect* newSize) {
         int width = viewRect.right - viewRect.left;
         int height = viewRect.bottom - viewRect.top;
         if (width > 0 && height > 0) {
-            pixelBuffer.resize(width * height, 0xFFFFFFFF);
+            pixelBuffer.clear();
+            pixelBuffer.resize(width * height, 0x00FFFFFF);  // White in BGR
             render();
             drawToWindow();
         }
@@ -162,9 +202,9 @@ void PluginView::render() {
         return;
     }
     
-    // Fill background with white
+    // Fill background with white (BGR format: 0x00FFFFFF)
     for (size_t i = 0; i < pixelBuffer.size(); ++i) {
-        pixelBuffer[i] = 0xFFFFFFFF;
+        pixelBuffer[i] = 0x00FFFFFF;
     }
     
     // Draw each knob with rotated dial image
@@ -205,14 +245,14 @@ void PluginView::drawRotatedImage(const Knob& knob) {
     int dialCx = dialWidth / 2;
     int dialCy = dialHeight / 2;
     
-    // Draw rotated image centered at (cx, cy) with cosine-based center alignment
+    // Draw rotated image centered at (cx, cy)
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            // Apply cosine damping for smoother center positioning
+            // Check if within circle radius
             double distance = std::sqrt(dx * dx + dy * dy);
             if (distance > radius) continue;
             
-            // Rotate the point using cosine/sine
+            // Rotate the point using cosine/sine (inverse rotation to get source pixel)
             double rotX = dx * cosA - dy * sinA;
             double rotY = dx * sinA + dy * cosA;
             
@@ -224,15 +264,23 @@ void PluginView::drawRotatedImage(const Knob& knob) {
             if (imgX >= 0 && imgX < dialWidth && imgY >= 0 && imgY < dialHeight) {
                 uint32_t srcPixel = dialImage[imgY * dialWidth + imgX];
                 
-                // Check if pixel is not fully transparent
+                // Extract ARGB components from source
                 uint32_t alpha = (srcPixel >> 24) & 0xFF;
+                
+                // Only draw if not fully transparent
                 if (alpha > 128) {
                     int px = cx + dx;
                     int py = cy + dy;
                     
                     // Draw to buffer if in bounds
                     if (px >= 0 && px < bufWidth && py >= 0 && py < bufHeight) {
-                        pixelBuffer[py * bufWidth + px] = srcPixel;
+                        // Convert ARGB to BGR for SetDIBitsToDevice
+                        uint32_t b = (srcPixel >>  0) & 0xFF;
+                        uint32_t g = (srcPixel >>  8) & 0xFF;
+                        uint32_t r = (srcPixel >> 16) & 0xFF;
+                        uint32_t bgrPixel = (r << 16) | (g << 8) | b;
+                        
+                        pixelBuffer[py * bufWidth + px] = bgrPixel;
                     }
                 }
             }
@@ -272,31 +320,95 @@ void PluginView::drawTextToWindow(HDC hdc, const char* text, int x, int y, uint3
     graphics.DrawString(wText, -1, &font, pointF, &brush);
 }
 
-int PluginView::getKnobAtPosition(int x, int y) const {
-    for (size_t i = 0; i < knobs.size(); ++i) {
-        int dx = x - knobs[i].x;
-        int dy = y - knobs[i].y;
-        int radius = knobs[i].size / 2;
-        if (dx * dx + dy * dy <= radius * radius) {
-            return static_cast<int>(i);
-        }
+void PluginView::invalidateRect() {
+    if (platformWindow) {
+        HWND hwnd = static_cast<HWND>(platformWindow);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        UpdateWindow(hwnd);
     }
-    return -1;
 }
 
-void PluginView::updateKnobValue(int knobIndex, int y) {
-    if (knobIndex >= 0 && knobIndex < static_cast<int>(knobs.size())) {
-        int cy = knobs[knobIndex].y;
-        int delta = cy - y;
-        int newValue = knobs[knobIndex].value + delta;
+LRESULT PluginView::onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_LBUTTONDOWN: {
+            int x = GET_X_LPARAM(lParam);
+            int y = GET_Y_LPARAM(lParam);
+            draggedKnobIndex = getKnobAtPosition(x, y);
+            lastMouseY = y;
+            return 0;
+        }
         
-        if (newValue < 0) newValue = 0;
-        if (newValue > 255) newValue = 255;
+        case WM_MOUSEMOVE: {
+            if (draggedKnobIndex >= 0) {
+                int y = GET_Y_LPARAM(lParam);
+                
+                if (lastMouseY >= 0) {
+                    int delta = lastMouseY - y;  // Up motion = positive = increase value
+                    
+                    int currentValue = knobs[draggedKnobIndex].value;
+                    int newValue = currentValue + delta;
+                    
+                    // Clamp to 0-255
+                    if (newValue < 0) newValue = 0;
+                    if (newValue > 255) newValue = 255;
+                    
+                    if (newValue != currentValue) {
+                        knobs[draggedKnobIndex].value = newValue;
+                        
+                        // Render and display immediately
+                        render();
+                        drawToWindow();
+                    }
+                }
+                
+                lastMouseY = y;
+            }
+            return 0;
+        }
         
-        knobs[knobIndex].value = newValue;
-        render();
-        drawToWindow();
+        case WM_LBUTTONUP: {
+            draggedKnobIndex = -1;
+            lastMouseY = -1;
+            return 0;
+        }
+        
+        case WM_MOUSEWHEEL: {
+            int x = GET_X_LPARAM(lParam);
+            int y = GET_Y_LPARAM(lParam);
+            
+            // Convert screen coordinates to client coordinates
+            POINT pt = {x, y};
+            ScreenToClient(hwnd, &pt);
+            
+            int knobIndex = getKnobAtPosition(pt.x, pt.y);
+            if (knobIndex >= 0) {
+                int wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+                int delta = (wheelDelta > 0) ? 5 : -5;
+                
+                int newValue = knobs[knobIndex].value + delta;
+                if (newValue < 0) newValue = 0;
+                if (newValue > 255) newValue = 255;
+                
+                knobs[knobIndex].value = newValue;
+                render();
+                drawToWindow();
+            }
+            return 0;
+        }
+        
+        case WM_PAINT: {
+            render();
+            drawToWindow();
+            ValidateRect(hwnd, nullptr);
+            return 0;
+        }
     }
+    
+    // Call original window procedure for unhandled messages
+    if (originalWindowProc) {
+        return CallWindowProc(originalWindowProc, hwnd, message, wParam, lParam);
+    }
+    return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
 void PluginView::drawToWindow() {
@@ -367,6 +479,33 @@ void PluginView::constrainSize() {
     }
     if (height > MAX_HEIGHT) {
         viewRect.bottom = viewRect.top + MAX_HEIGHT;
+    }
+}
+
+int PluginView::getKnobAtPosition(int x, int y) const {
+    for (size_t i = 0; i < knobs.size(); ++i) {
+        int dx = x - knobs[i].x;
+        int dy = y - knobs[i].y;
+        int radius = knobs[i].size / 2;
+        if (dx * dx + dy * dy <= radius * radius) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void PluginView::updateKnobValue(int knobIndex, int y) {
+    if (knobIndex >= 0 && knobIndex < static_cast<int>(knobs.size())) {
+        int cy = knobs[knobIndex].y;
+        int delta = cy - y;
+        int newValue = knobs[knobIndex].value + delta;
+        
+        if (newValue < 0) newValue = 0;
+        if (newValue > 255) newValue = 255;
+        
+        knobs[knobIndex].value = newValue;
+        render();
+        drawToWindow();
     }
 }
 
