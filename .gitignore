@@ -1,0 +1,15 @@
+# Build output
+build/
+
+# VST3 SDK (large, not part of this repo)
+vst3sdk/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.user
+*.suo
+.vs/

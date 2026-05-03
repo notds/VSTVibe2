@@ -14,6 +14,9 @@ public:
     VSTVibe2Processor();
     ~VSTVibe2Processor() override = default;
 
+    // Volume knobs for each oscillator (sine, square, triangle, saw)
+    std::vector<float> oscillatorVolumes = {0.25f, 0.25f, 0.25f, 0.25f};
+
     static Steinberg::FUnknown* createInstance(void*) {
         return (Steinberg::Vst::IAudioProcessor*)new VSTVibe2Processor();
     }
@@ -45,11 +48,12 @@ private:
     double phase = 0.0;
     
     // MIDI note state
-    float currentFrequency = 0.0f;
-    bool noteActive = false;
+    float baseFrequency     = 0.0f;
+    float currentVelocity   = 1.0f;
+    float pitchBendSemitones = 0.0f;
+    bool  noteActive         = false;
     
-    // Volume knobs for each oscillator (sine, square, triangle, saw)
-    std::vector<float> oscillatorVolumes = {0.25f, 0.25f, 0.25f, 0.25f};
+
     
     // Oscillator functions
     float generateSineWave(double phase);

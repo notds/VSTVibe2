@@ -2,7 +2,7 @@
 #include "pluginprocessor.h"
 #include "plugincontroller.h"
 
-#define stringPluginName "VSTVibe2"
+#define stringPluginName "MONODUCK 1.0"
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -12,7 +12,7 @@ extern FUnknown* createProcessorInstance(void*);
 extern FUnknown* createControllerInstance(void*);
 }
 
-BEGIN_FACTORY_DEF("VSTVibe2", "https://example.com", "mailto:info@example.com")
+BEGIN_FACTORY_DEF("MONODUCK", "https://example.com", "mailto:info@example.com")
 
     DEF_CLASS2(INLINE_UID_FROM_FUID(VSTVibe2::kVSTVibe2ProcessorUID),
                PClassInfo::kManyInstances,

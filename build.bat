@@ -49,7 +49,6 @@ if %errorlevel% neq 0 (
 echo.
 echo VSTVibe2 build completed successfully!
 echo ======================================
-exit /b 0
 echo Build completed successfully!
 echo ======================================
 echo.
@@ -57,16 +56,27 @@ echo Plugin location:
 echo %~dp0build\Release\VSTVibe.vst3
 echo.
 
+        taskkill /F /IM "Ableton Live 11 Suite.exe" 
+        ping 8.8.8.8 -n 2 > nul
+        del "C:\VST_Installed\64bit\MONODUCK.vst3"
+        copy "C:\code\C++\VSTVibe2\build\Release\MONODUCK.vst3" "C:\VST_Installed\64bit\MONODUCK.vst3" /Y      
+        start "C:\ProgramData\Ableton\Live 11 Suite\Program\Ableton Live 11 Suite.exe" "E:\Ableton 2026\VibeVST\madeaVST Project\madeaVST.als"
+
+
 REM Check if plugin was created and show file size
-if exist "Release\VSTVibe.vst3" (
-    for %%A in ("Release\VSTVibe.vst3") do (
+if exist "C:\code\C++\VSTVibe2\build\Release\MONODUCK.vst3" (
+    for %%A in ("Release\MONODUCK.vst3") do (
         set size=%%~zA
         set /a size_kb=!size!/1024
         echo File size: !size_kb! KB
+
     )
 ) else (
     echo WARNING: Plugin file not found!
     exit /b 1
 )
+
+
+
 
 exit /b 0

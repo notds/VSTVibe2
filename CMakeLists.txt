@@ -68,7 +68,7 @@ if(MSVC)
 endif()
 
 set_target_properties(VSTVibe2 PROPERTIES
-  OUTPUT_NAME "VSTVibe2"
+  OUTPUT_NAME "MONODUCK"
   SUFFIX ".vst3"
   PREFIX ""
 )

@@ -1,5 +1,6 @@
 #include "pluginprocessor.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstparameterchanges.h"
 #include <cmath>
 
 #ifndef M_PI
@@ -76,7 +77,30 @@ float VSTVibe2Processor::mixOscillators(double phaseVal) {
 }
 
 Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::ProcessData& data) {
+    // Handle parameter changes from the UI
+    if (data.inputParameterChanges) {
+        Steinberg::int32 numParams = data.inputParameterChanges->getParameterCount();
+        for (Steinberg::int32 i = 0; i < numParams; ++i) {
+            Steinberg::Vst::IParamValueQueue* queue = data.inputParameterChanges->getParameterData(i);
+            if (!queue) continue;
+            Steinberg::Vst::ParamID id = queue->getParameterId();
+            Steinberg::int32 numPoints = queue->getPointCount();
+            if (numPoints == 0) continue;
+            Steinberg::int32 sampleOffset;
+            Steinberg::Vst::ParamValue value;
+            if (queue->getPoint(numPoints - 1, sampleOffset, value) != Steinberg::kResultOk) continue;
+
+            if (id < static_cast<Steinberg::Vst::ParamID>(oscillatorVolumes.size())) {
+                oscillatorVolumes[id] = static_cast<float>(value);
+            } else if (id == 5) {
+                // normalized 0–1 → semitones -12 to +12; 0.5 = no bend
+                pitchBendSemitones = (static_cast<float>(value) - 0.5f) * 24.0f;
+            }
+        }
+    }
+
     // Handle MIDI events
+    bool noteStateChanged = false;
     if (data.inputEvents) {
         Steinberg::int32 eventCount = data.inputEvents->getEventCount();
         for (Steinberg::int32 i = 0; i < eventCount; ++i) {
@@ -86,13 +110,23 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
             }
 
             if (event.type == Steinberg::Vst::Event::kNoteOnEvent) {
-                // Convert MIDI note to frequency (A4 = 440 Hz, MIDI note 69)
                 int midiNote = event.noteOn.pitch;
-                currentFrequency = 440.0f * std::pow(2.0f, (midiNote - 69) / 12.0f);
-                noteActive = true;
+                baseFrequency = 440.0f * std::pow(2.0f, (midiNote - 105) / 12.0f);
+                currentVelocity = event.noteOn.velocity;
+                if (!noteActive) { noteActive = true; noteStateChanged = true; }
             } else if (event.type == Steinberg::Vst::Event::kNoteOffEvent) {
-                noteActive = false;
+                if (noteActive) { noteActive = false; noteStateChanged = true; }
             }
+        }
+    }
+
+    // Notify controller of note active state changes (param ID 4)
+    if (noteStateChanged && data.outputParameterChanges) {
+        Steinberg::int32 index;
+        auto* queue = data.outputParameterChanges->addParameterData(4, index);
+        if (queue) {
+            Steinberg::int32 pointIndex;
+            queue->addPoint(0, noteActive ? 1.0 : 0.0, pointIndex);
         }
     }
 
@@ -109,23 +143,22 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
     Steinberg::int32 numSamples = data.numSamples;
     Steinberg::int32 numChannels = output.numChannels;
 
+    // Apply pitch bend once per block
+    const float effectiveFrequency = baseFrequency * std::pow(2.0f, pitchBendSemitones / 12.0f);
+
     // Generate audio
     for (Steinberg::int32 sample = 0; sample < numSamples; ++sample) {
         float sampleValue = 0.0f;
         
         if (noteActive) {
-            sampleValue = mixOscillators(phase);
-            phase += currentFrequency / sampleRate;
-            
-            // Wrap phase to prevent overflow
-            if (phase >= 1.0) {
-                phase -= 1.0;
-            }
+            sampleValue = mixOscillators(phase) * currentVelocity;
+            phase += effectiveFrequency / sampleRate;
+            if (phase >= 1.0) phase -= 1.0;
         }
 
-        // Write to all channels
         for (Steinberg::int32 channel = 0; channel < numChannels; ++channel) {
-            channels[channel][sample] = sampleValue;
+            if (channels[channel])
+                channels[channel][sample] = sampleValue;
         }
     }
 
