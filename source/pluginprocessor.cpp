@@ -1,4 +1,5 @@
 #include "pluginprocessor.h"
+#include "mandelbrot_shaper.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include <cmath>
@@ -66,6 +67,28 @@ float VSTVibe2Processor::generateSawWave(double phaseVal) {
     return -1.0f + 2.0f * normalizedPhase;
 }
 
+// Feedforward peak compressor. atkCoeff/relCoeff are precomputed per block.
+// ratio scales 1:1 → 20:1 with squeeze; threshold fixed at -18 dBFS.
+// Auto makeup gain (+9 dB max) keeps perceived loudness stable.
+static float applyCompressor(float sample, float squeeze,
+                              float& env, float atkCoeff, float relCoeff) {
+    if (squeeze < 1e-4f) return sample;
+
+    const float level = std::abs(sample);
+    env = (level > env)
+        ? atkCoeff * env + (1.0f - atkCoeff) * level
+        : relCoeff * env + (1.0f - relCoeff) * level;
+
+    const float thresholdDb     = -18.0f;
+    const float ratio           = 1.0f + squeeze * 19.0f;
+    const float levelDb         = 20.0f * std::log10(env + 1e-7f);
+    const float overDb          = std::max(0.0f, levelDb - thresholdDb);
+    const float gainReductionDb = overDb * (1.0f - 1.0f / ratio);
+    const float makeupDb        = squeeze * 9.0f;
+
+    return sample * std::pow(10.0f, (-gainReductionDb + makeupDb) / 20.0f);
+}
+
 float VSTVibe2Processor::mixOscillators(double phaseVal) {
     float sine = generateSineWave(phaseVal) * oscillatorVolumes[0];
     float square = generateSquareWave(phaseVal) * oscillatorVolumes[1];
@@ -92,6 +115,10 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
 
             if (id < static_cast<Steinberg::Vst::ParamID>(oscillatorVolumes.size())) {
                 oscillatorVolumes[id] = static_cast<float>(value);
+            } else if (id == 4) {
+                spice = static_cast<float>(value);
+            } else if (id == 7) {
+                squeeze = static_cast<float>(value);
             } else if (id == 5) {
                 // normalized 0–1 → semitones -12 to +12; 0.5 = no bend
                 pitchBendSemitones = (static_cast<float>(value) - 0.5f) * 24.0f;
@@ -120,10 +147,10 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
         }
     }
 
-    // Notify controller of note active state changes (param ID 4)
+    // Notify controller of note active state changes (param ID 6 = kNoteActiveID)
     if (noteStateChanged && data.outputParameterChanges) {
         Steinberg::int32 index;
-        auto* queue = data.outputParameterChanges->addParameterData(4, index);
+        auto* queue = data.outputParameterChanges->addParameterData(6, index);
         if (queue) {
             Steinberg::int32 pointIndex;
             queue->addPoint(0, noteActive ? 1.0 : 0.0, pointIndex);
@@ -146,15 +173,24 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
     // Apply pitch bend once per block
     const float effectiveFrequency = baseFrequency * std::pow(2.0f, pitchBendSemitones / 12.0f);
 
+    // Compressor time constants — computed once per block (sampleRate is stable)
+    const float cAtk = std::exp(-1.0f / (sampleRate * 0.010f));  // 10 ms attack
+    const float cRel = std::exp(-1.0f / (sampleRate * 0.150f));  // 150 ms release
+
     // Generate audio
     for (Steinberg::int32 sample = 0; sample < numSamples; ++sample) {
         float sampleValue = 0.0f;
-        
+
         if (noteActive) {
             sampleValue = mixOscillators(phase) * currentVelocity;
+            sampleValue = applyMandelbrot(sampleValue, spice, mandelbrotState);
             phase += effectiveFrequency / sampleRate;
             if (phase >= 1.0) phase -= 1.0;
         }
+
+        // Compressor runs on every sample (including silence) so the envelope
+        // decays naturally between notes
+        sampleValue = applyCompressor(sampleValue, squeeze, compressorEnv, cAtk, cRel);
 
         for (Steinberg::int32 channel = 0; channel < numChannels; ++channel) {
             if (channels[channel])

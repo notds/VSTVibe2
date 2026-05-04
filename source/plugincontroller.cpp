@@ -42,6 +42,17 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::initialize(Steinberg::FUnknown
         0.0, 1.0, 0.25
     );
     parameters.addParameter(param);
+    
+    param = new Steinberg::Vst::RangeParameter(
+        STR16("Spice"),
+        kSpiceID,
+        STR16("%"),
+        0.0, 1.0, 0.25
+    );
+    parameters.addParameter(param);
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Squeeze"), kSqueezeID, STR16("%"), 0.0, 1.0, 0.0));
 
     parameters.addParameter(new Steinberg::Vst::RangeParameter(
         STR16("Note Active"), kNoteActiveID, STR16(""), 0.0, 1.0, 0.0));
@@ -74,6 +85,10 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::setParamNormalized(Steinberg::
             pluginView->setKnobValue(static_cast<int>(tag), static_cast<int>(value * 255.0));
         else if (tag == kNoteActiveID)
             pluginView->setNoteActive(value > 0.5);
+        else if (tag == kSpiceID)
+            pluginView->setKnobValue(4, static_cast<int>(value * 255.0));
+        else if (tag == kSqueezeID)
+            pluginView->setKnobValue(5, static_cast<int>(value * 255.0));
     }
     return result;
 }

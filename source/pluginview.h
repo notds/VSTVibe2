@@ -2,6 +2,7 @@
 
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "public.sdk/source/common/pluginview.h"
+#include "mandelbrot_shaper.h"
 #include <vector>
 #include <windows.h>
 
@@ -36,7 +37,7 @@ private:
     static constexpr int MIN_HEIGHT = 380;
     static constexpr int MAX_WIDTH  = 2048;
     static constexpr int MAX_HEIGHT = 1536;
-    static constexpr int KNOB_SIZE  = 80;
+    static constexpr int KNOB_SIZE  = 50;
     
     Steinberg::ViewRect viewRect{0, 0, 600, 400};
     void* platformWindow = nullptr;
@@ -58,6 +59,7 @@ private:
     int    wfFeedbackW = 0;
     int    wfFeedbackH = 0;
     double waveformHue = 0.0;  // 0-360, cycles through bright colors
+    MandelbrotState mandelbrotState;
 
     std::vector<uint32_t> dialImage;
     int    dialWidth  = 0;

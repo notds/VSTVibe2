@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include "dial_image_data.h"
 #include "bg_image_data.h"
+#include "mandelbrot_shaper.h"
 #include <gdiplus.h>
 
 
@@ -73,6 +74,8 @@ void PluginView::initializeKnobs() {
     knobs.push_back({180, 200, KNOB_SIZE, 128, "Square"});
     knobs.push_back({280, 200, KNOB_SIZE, 128, "Triangle"});
     knobs.push_back({380, 200, KNOB_SIZE, 128, "Saw"});
+    knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice"});
+    knobs.push_back({400, 320, KNOB_SIZE,   0, "Squeeze"});
 }
 
 void PluginView::loadBackgroundImage() {
@@ -389,15 +392,26 @@ Steinberg::tresult PLUGIN_API PluginView::getSize(Steinberg::ViewRect* size) {
 void PluginView::updateLayout() {
     const int w = viewRect.right  - viewRect.left;
     const int h = viewRect.bottom - viewRect.top;
-    const int n = static_cast<int>(knobs.size());
-    if (n == 0 || w <= 0 || h <= 0) return;
+    if (knobs.empty() || w <= 0 || h <= 0) return;
 
-    // Knobs evenly spaced and horizontally centered; Y at 67% of height
-    const int spacing = w / (n + 1);
-    const int knobY   = h * 67 / 100;
-    for (int i = 0; i < n; ++i) {
-        knobs[i].x = spacing * (i + 1);
-        knobs[i].y = knobY;
+    // Row 1: first 4 knobs, evenly spaced across full width
+    const int row1Count   = std::min(4, static_cast<int>(knobs.size()));
+    const int row1Y       = h * 52 / 100;
+    const int row1Spacing = w / (row1Count + 1);
+    for (int i = 0; i < row1Count; ++i) {
+        knobs[i].x = row1Spacing * (i + 1);
+        knobs[i].y = row1Y;
+    }
+
+    // Row 2: remaining knobs, evenly spaced and centered below row 1
+    const int row2Count = static_cast<int>(knobs.size()) - row1Count;
+    if (row2Count > 0) {
+        const int row2Y       = h * 82 / 100;
+        const int row2Spacing = w / (row2Count + 1);
+        for (int i = 0; i < row2Count; ++i) {
+            knobs[row1Count + i].x = row2Spacing * (i + 1);
+            knobs[row1Count + i].y = row2Y;
+        }
     }
 }
 
@@ -479,7 +493,7 @@ void PluginView::drawWaveform() {
 
     // Advance shake LFO (~5 Hz at 30 fps)
     if (noteActive) {
-        shakePhase += (rand()%5) / 30.0;
+        shakePhase += 1 / 30.0;
         if (shakePhase >= 1.0) shakePhase -= 1.0;
         scrollOffset += 2;
     }
@@ -509,7 +523,7 @@ void PluginView::drawWaveform() {
     const double numCycles  = 2.0;
 
     // Cycle hue ~2 degrees per redraw through a fully saturated, full-brightness spectrum
-    waveformHue += 2.0;
+    waveformHue += 1.9;
     if (waveformHue >= 360.0) waveformHue -= 360.0;
 
     const double   hf = waveformHue / 60.0;
@@ -531,6 +545,14 @@ void PluginView::drawWaveform() {
     // Scroll phase offset: subtracting scrollOffset moves the wave rightward
     const double scrollPhaseOffset = (static_cast<double>(scrollOffset) / numSamples) * numCycles;
 
+    const float spiceLevel   = knobs.size() > 4 ? knobs[4].value / 255.0f : 0.0f;
+    const float squeezeLevel = knobs.size() > 5 ? knobs[5].value / 255.0f : 0.0f;
+
+    // Steady-state compressor constants (mirrors audio processor, no envelope follower)
+    const float compThreshDb = -18.0f;
+    const float compRatio    = 1.0f + squeezeLevel * 19.0f;
+    const float compMakeupDb = squeezeLevel * 9.0f;
+
     int prevPy = -1;
     for (int s = 0; s < numSamples; ++s) {
         double phase     = (static_cast<double>(s) / numSamples) * numCycles - scrollPhaseOffset;
@@ -547,6 +569,15 @@ void PluginView::drawWaveform() {
 
         float saw   = (-1.0f + 2.0f * np) * vols[3];
         float mixed = (sine + square + tri + saw) * 0.25f;
+        mixed = applyMandelbrot(mixed, spiceLevel, mandelbrotState);
+
+        // Steady-state compression: compute gain from instantaneous amplitude
+        if (squeezeLevel > 1e-4f) {
+            const float levelDb  = 20.0f * std::log10(std::abs(mixed) + 1e-7f);
+            const float overDb   = std::max(0.0f, levelDb - compThreshDb);
+            const float reductDb = overDb * (1.0f - 1.0f / compRatio);
+            mixed *= std::pow(10.0f, (-reductDb + compMakeupDb) / 20.0f);
+        }
 
         int py = midY - static_cast<int>(mixed * amplitude);
         py = std::max(y1 + 1, std::min(y2 - 2, py));
@@ -612,6 +643,7 @@ void PluginView::drawTextToWindow(HDC hdc, const char* text, int x, int y, uint3
     graphics.SetSmoothingMode(SmoothingModeAntiAlias);
 
     Font font(L"Arial", 9, FontStyleBold);
+    
 
     wchar_t wText[256];
     MultiByteToWideChar(CP_ACP, 0, text, -1, wText, 256);
@@ -620,7 +652,7 @@ void PluginView::drawTextToWindow(HDC hdc, const char* text, int x, int y, uint3
     int g = (color >> 8) & 0xFF;
     int r = (color >> 16) & 0xFF;
 
-    // White shadow offset by 1px
+    // White shadow offset by 2px
     SolidBrush shadowBrush(Color(255, 255, 255, 255));
     PointF shadowPt(static_cast<REAL>(x + 1), static_cast<REAL>(y + 1));
     graphics.DrawString(wText, -1, &font, shadowPt, &shadowBrush);

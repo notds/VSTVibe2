@@ -1,6 +1,7 @@
 #pragma once
 
 #include "public.sdk/source/vst/vstaudioeffect.h"
+#include "mandelbrot_shaper.h"
 #include <vector>
 #include <cmath>
 
@@ -48,10 +49,14 @@ private:
     double phase = 0.0;
     
     // MIDI note state
-    float baseFrequency     = 0.0f;
-    float currentVelocity   = 1.0f;
+    float baseFrequency      = 0.0f;
+    float currentVelocity    = 1.0f;
     float pitchBendSemitones = 0.0f;
     bool  noteActive         = false;
+    float           spice          = 0.25f;
+    float           squeeze        = 0.0f;
+    float           compressorEnv  = 0.0f;
+    MandelbrotState mandelbrotState;
     
 
     

@@ -13,8 +13,10 @@ enum ParamID {
     kSquareVolumeID = 1,
     kTriangleVolumeID = 2,
     kSawVolumeID = 3,
-    kNoteActiveID = 4,
-    kPitchBendID = 5
+    kSpiceID      = 4,
+    kPitchBendID  = 5,
+    kNoteActiveID = 6,
+    kSqueezeID    = 7
 };
 
 class VSTVibe2Controller : public Steinberg::Vst::EditController,
