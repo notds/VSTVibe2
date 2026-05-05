@@ -50,13 +50,15 @@ inline float applyMandelbrot(float sample, float spiceAmount, MandelbrotState& s
         }
     }
 
-    // t = 1 inside set (no distortion), t = 0 instant escape (max distortion)
     const float t     = static_cast<float>(escapedAt) / static_cast<float>(maxIter);
-    const float chaos = 1.0f - t;
+    const float chaos = (1.0f - t) * 0.5f;  // cap at 0.5 to halve overall effect amplitude
+
+    // Skip iterations where the shaped result would be negligibly different from dry
+    if (chaos * spiceAmount < 0.005f) return sample;
 
     // Frequency-modulated harmonic fold, then tanh soft-clip
-    const float fold   = sample + chaos * std::sin(sample * (1.0f + chaos * 5.0f) * static_cast<float>(M_PI));
-    const float shaped = std::tanh(fold * (1.0f + chaos));
+    const float fold   = sample + chaos * std::sin(sample * (1.0f + chaos * 3.0f) * static_cast<float>(M_PI));
+    const float shaped = std::tanh(fold * (1.0f + chaos * 0.5f));
 
     return sample * (1.0f - spiceAmount) + shaped * spiceAmount;
 }

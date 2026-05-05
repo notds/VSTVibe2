@@ -3,6 +3,7 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include <cmath>
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -40,17 +41,14 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::setupProcessing(Steinberg::Vst:
 
 float VSTVibe2Processor::generateSineWave(double phaseVal) {
     return static_cast<float>(std::sin(2.0 * M_PI * phaseVal));
-}    
-  
+}
 
 float VSTVibe2Processor::generateSquareWave(double phaseVal) {
-    // Normalize phase to [0, 1)
     double normalizedPhase = phaseVal - std::floor(phaseVal);
     return (normalizedPhase < 0.5) ? 1.0f : -1.0f;
 }
 
 float VSTVibe2Processor::generateTriangleWave(double phaseVal) {
-    // Normalize phase to [0, 1)
     double normalizedPhase = phaseVal - std::floor(phaseVal);
     if (normalizedPhase < 0.25) {
         return -1.0f + 4.0f * normalizedPhase;
@@ -62,7 +60,6 @@ float VSTVibe2Processor::generateTriangleWave(double phaseVal) {
 }
 
 float VSTVibe2Processor::generateSawWave(double phaseVal) {
-    // Normalize phase to [0, 1)
     double normalizedPhase = phaseVal - std::floor(phaseVal);
     return -1.0f + 2.0f * normalizedPhase;
 }
@@ -89,18 +86,23 @@ static float applyCompressor(float sample, float squeeze,
     return sample * std::pow(10.0f, (-gainReductionDb + makeupDb) / 20.0f);
 }
 
+// Pre-gain tanh waveshaper. At low amounts: subtle saturation. At high: near hard clip.
+static float applyDistortion(float sample, float amount) {
+    if (amount < 1e-4f) return sample;
+    const float drive  = 1.0f + amount * 19.0f;   // 1× – 20× pre-gain
+    const float shaped = std::tanh(sample * drive); // tanh clamps to [-1, 1]
+    return sample * (1.0f - amount) + shaped * amount;
+}
+
 float VSTVibe2Processor::mixOscillators(double phaseVal) {
-    float sine = generateSineWave(phaseVal) * oscillatorVolumes[0];
-    float square = generateSquareWave(phaseVal) * oscillatorVolumes[1];
+    float sine     = generateSineWave(phaseVal)     * oscillatorVolumes[0];
+    float square   = generateSquareWave(phaseVal)   * oscillatorVolumes[1];
     float triangle = generateTriangleWave(phaseVal) * oscillatorVolumes[2];
-    float saw = generateSawWave(phaseVal) * oscillatorVolumes[3];
-    
-    // Mix all oscillators and normalize
+    float saw      = generateSawWave(phaseVal)      * oscillatorVolumes[3];
     return (sine + square + triangle + saw) * 0.25f;
 }
 
 Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::ProcessData& data) {
-    // Handle parameter changes from the UI
     if (data.inputParameterChanges) {
         Steinberg::int32 numParams = data.inputParameterChanges->getParameterCount();
         for (Steinberg::int32 i = 0; i < numParams; ++i) {
@@ -113,41 +115,81 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
             Steinberg::Vst::ParamValue value;
             if (queue->getPoint(numPoints - 1, sampleOffset, value) != Steinberg::kResultOk) continue;
 
-            if (id < static_cast<Steinberg::Vst::ParamID>(oscillatorVolumes.size())) {
-                oscillatorVolumes[id] = static_cast<float>(value);
-            } else if (id == 4) {
-                spice = static_cast<float>(value);
-            } else if (id == 7) {
-                squeeze = static_cast<float>(value);
-            } else if (id == 5) {
-                // normalized 0–1 → semitones -12 to +12; 0.5 = no bend
+            if      (id == 0) { oscillatorVolumes[0] = static_cast<float>(value); }
+            else if (id == 1) { oscillatorVolumes[1] = static_cast<float>(value); }
+            else if (id == 2) { oscillatorVolumes[2] = static_cast<float>(value); }
+            else if (id == 3) { oscillatorVolumes[3] = static_cast<float>(value); }
+            else if (id == 4)  { spice      = static_cast<float>(value); }
+            else if (id == 7)  { squeeze    = static_cast<float>(value); }
+            else if (id == 9)  { glide      = static_cast<float>(value); }
+            else if (id == 10) { distortion = static_cast<float>(value); }
+            else if (id == 5) {
                 pitchBendSemitones = (static_cast<float>(value) - 0.5f) * 24.0f;
             }
         }
     }
 
-    // Handle MIDI events
     bool noteStateChanged = false;
     if (data.inputEvents) {
         Steinberg::int32 eventCount = data.inputEvents->getEventCount();
         for (Steinberg::int32 i = 0; i < eventCount; ++i) {
             Steinberg::Vst::Event event;
-            if (data.inputEvents->getEvent(i, event) != Steinberg::kResultOk) {
-                continue;
-            }
+            if (data.inputEvents->getEvent(i, event) != Steinberg::kResultOk) continue;
 
             if (event.type == Steinberg::Vst::Event::kNoteOnEvent) {
-                int midiNote = event.noteOn.pitch;
-                baseFrequency = 440.0f * std::pow(2.0f, (midiNote - 105) / 12.0f);
-                currentVelocity = event.noteOn.velocity;
+                const int   pitch   = event.noteOn.pitch;
+                const float newFreq = 440.0f * std::pow(2.0f, (pitch - 105) / 12.0f);
+                const float vel     = event.noteOn.velocity;
+
+                heldNotes.push_back({pitch, newFreq, vel});
+                currentVelocity = vel;
+
+                if (noteActive && currentFrequency > 0.0f && glide > 1e-4f) {
+                    // Glide to new pitch — don't retrigger phase
+                    targetFrequency   = newFreq;
+                    const int slides  = std::max(1, static_cast<int>(sampleRate * glide * 2.0f));
+                    portamentoRatio   = std::pow(targetFrequency / currentFrequency, 1.0f / slides);
+                    portamentoSamples = slides;
+                } else {
+                    // Instant jump — retrigger phase
+                    currentFrequency  = newFreq;
+                    targetFrequency   = newFreq;
+                    portamentoRatio   = 1.0f;
+                    portamentoSamples = 0;
+                    phase             = 0.0;
+                }
+
                 if (!noteActive) { noteActive = true; noteStateChanged = true; }
+
             } else if (event.type == Steinberg::Vst::Event::kNoteOffEvent) {
-                if (noteActive) { noteActive = false; noteStateChanged = true; }
+                const int pitch = event.noteOff.pitch;
+                auto it = std::find_if(heldNotes.begin(), heldNotes.end(),
+                    [pitch](const HeldNote& n) { return n.pitch == pitch; });
+                if (it != heldNotes.end())
+                    heldNotes.erase(it);
+
+                if (heldNotes.empty()) {
+                    if (noteActive) { noteActive = false; noteStateChanged = true; }
+                } else {
+                    // Return to most recently pressed still-held note
+                    const HeldNote& ret = heldNotes.back();
+                    targetFrequency = ret.frequency;
+                    currentVelocity = ret.velocity;
+
+                    if (glide > 1e-4f && currentFrequency > 0.0f) {
+                        const int slides  = std::max(1, static_cast<int>(sampleRate * glide * 2.0f));
+                        portamentoRatio   = std::pow(targetFrequency / currentFrequency, 1.0f / slides);
+                        portamentoSamples = slides;
+                    } else {
+                        currentFrequency  = targetFrequency;
+                        portamentoRatio   = 1.0f;
+                        portamentoSamples = 0;
+                    }
+                }
             }
         }
     }
 
-    // Notify controller of note active state changes (param ID 6 = kNoteActiveID)
     if (noteStateChanged && data.outputParameterChanges) {
         Steinberg::int32 index;
         auto* queue = data.outputParameterChanges->addParameterData(6, index);
@@ -157,28 +199,27 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
         }
     }
 
-    if (data.numOutputs == 0) {
-        return Steinberg::kResultOk;
-    }
+    if (data.numOutputs == 0) return Steinberg::kResultOk;
 
     Steinberg::Vst::AudioBusBuffers& output = data.outputs[0];
     float** channels = output.channelBuffers32;
-    if (!channels) {
-        return Steinberg::kResultOk;
-    }
+    if (!channels) return Steinberg::kResultOk;
 
-    Steinberg::int32 numSamples = data.numSamples;
+    Steinberg::int32 numSamples  = data.numSamples;
     Steinberg::int32 numChannels = output.numChannels;
 
-    // Apply pitch bend once per block
-    const float effectiveFrequency = baseFrequency * std::pow(2.0f, pitchBendSemitones / 12.0f);
+    const float pitchBendMult = std::pow(2.0f, pitchBendSemitones / 12.0f);
+    const float cAtk = std::exp(-1.0f / (sampleRate * 0.010f));
+    const float cRel = std::exp(-1.0f / (sampleRate * 0.150f));
 
-    // Compressor time constants — computed once per block (sampleRate is stable)
-    const float cAtk = std::exp(-1.0f / (sampleRate * 0.010f));  // 10 ms attack
-    const float cRel = std::exp(-1.0f / (sampleRate * 0.150f));  // 150 ms release
-
-    // Generate audio
     for (Steinberg::int32 sample = 0; sample < numSamples; ++sample) {
+        if (portamentoSamples > 0) {
+            currentFrequency *= portamentoRatio;
+            if (--portamentoSamples == 0)
+                currentFrequency = targetFrequency;
+        }
+
+        const float effectiveFrequency = currentFrequency * pitchBendMult;
         float sampleValue = 0.0f;
 
         if (noteActive) {
@@ -188,9 +229,8 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
             if (phase >= 1.0) phase -= 1.0;
         }
 
-        // Compressor runs on every sample (including silence) so the envelope
-        // decays naturally between notes
         sampleValue = applyCompressor(sampleValue, squeeze, compressorEnv, cAtk, cRel);
+        sampleValue = applyDistortion(sampleValue, distortion);
 
         for (Steinberg::int32 channel = 0; channel < numChannels; ++channel) {
             if (channels[channel])
@@ -201,7 +241,6 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
     return Steinberg::kResultOk;
 }
 
-// Public factory functions
 Steinberg::FUnknown* createProcessorInstance(void*) {
     return static_cast<Steinberg::Vst::IAudioProcessor*>(new VSTVibe2Processor());
 }

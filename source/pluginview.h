@@ -13,6 +13,7 @@ struct Knob {
     int size;              // Diameter
     int value;             // 0-255
     const char* label;     // Label text (waveform name)
+    int paramID;           // VST3 parameter ID (NOT the knob array index)
 };
 
 class PluginView : public Steinberg::CPluginView {
@@ -82,10 +83,8 @@ private:
     void loadDialImage();
     void drawDialImage(const Knob& knob);
     int getKnobAtPosition(int x, int y) const;
-    void updateKnobValue(int knobIndex, int y);
     void invalidateRect();
-    
-    // Friend function for window procedure
+
     friend LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 };

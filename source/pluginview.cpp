@@ -13,6 +13,7 @@
 #include "dial_image_data.h"
 #include "bg_image_data.h"
 #include "mandelbrot_shaper.h"
+#include "pluginprocessor.h"
 #include <gdiplus.h>
 
 
@@ -70,12 +71,14 @@ PluginView::~PluginView() {
 
 void PluginView::initializeKnobs() {
     knobs.clear();
-    knobs.push_back({80,  200, KNOB_SIZE, 128, "Sine"});
-    knobs.push_back({180, 200, KNOB_SIZE, 128, "Square"});
-    knobs.push_back({280, 200, KNOB_SIZE, 128, "Triangle"});
-    knobs.push_back({380, 200, KNOB_SIZE, 128, "Saw"});
-    knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice"});
-    knobs.push_back({400, 320, KNOB_SIZE,   0, "Squeeze"});
+    knobs.push_back({80,  200, KNOB_SIZE, 255, "Sine",     0}); // kSineVolumeID
+    knobs.push_back({180, 200, KNOB_SIZE, 255, "Square",   1}); // kSquareVolumeID
+    knobs.push_back({280, 200, KNOB_SIZE, 255, "Triangle", 2}); // kTriangleVolumeID
+    knobs.push_back({380, 200, KNOB_SIZE, 255, "Saw",      3}); // kSawVolumeID
+    knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice",       4}); // kSpiceID
+    knobs.push_back({450, 320, KNOB_SIZE,   0, "Squeeze",     7}); // kSqueezeID
+    knobs.push_back({600, 320, KNOB_SIZE,   0, "Glide",       9}); // kGlideID
+    knobs.push_back({750, 320, KNOB_SIZE,   0, "Distortion", 10}); // kDistortionID
 }
 
 void PluginView::loadBackgroundImage() {
@@ -499,8 +502,8 @@ void PluginView::drawWaveform() {
     }
     const double shakeSin    = noteActive ? std::sin(2.0 * M_PI * shakePhase) : 0.0;
     const double shakeCos    = noteActive ? std::cos(2.0 * M_PI * shakePhase) : 0.0;
-    const int    shakeOffsetY = static_cast<int>(shakeSin * 24.0);
-    const int    shakeOffsetX = static_cast<int>(shakeCos * 24.0);
+    const int    shakeOffsetY = static_cast<int>(shakeSin * 12.0);
+    const int    shakeOffsetX = static_cast<int>(shakeCos * 12.0);
 
     // Scroll left-to-right per redraw (always running)
     scrollOffset -= 1;
@@ -545,8 +548,9 @@ void PluginView::drawWaveform() {
     // Scroll phase offset: subtracting scrollOffset moves the wave rightward
     const double scrollPhaseOffset = (static_cast<double>(scrollOffset) / numSamples) * numCycles;
 
-    const float spiceLevel   = knobs.size() > 4 ? knobs[4].value / 255.0f : 0.0f;
-    const float squeezeLevel = knobs.size() > 5 ? knobs[5].value / 255.0f : 0.0f;
+    const float spiceLevel      = knobs.size() > 4 ? knobs[4].value / 255.0f : 0.0f;
+    const float squeezeLevel    = knobs.size() > 5 ? knobs[5].value / 255.0f : 0.0f;
+    const float distortionLevel = knobs.size() > 7 ? knobs[7].value / 255.0f : 0.0f;
 
     // Steady-state compressor constants (mirrors audio processor, no envelope follower)
     const float compThreshDb = -18.0f;
@@ -577,6 +581,13 @@ void PluginView::drawWaveform() {
             const float overDb   = std::max(0.0f, levelDb - compThreshDb);
             const float reductDb = overDb * (1.0f - 1.0f / compRatio);
             mixed *= std::pow(10.0f, (-reductDb + compMakeupDb) / 20.0f);
+        }
+
+        // Distortion: tanh waveshaping — matches end of audio chain
+        if (distortionLevel > 1e-4f) {
+            const float drive  = 1.0f + distortionLevel * 19.0f;
+            const float shaped = std::tanh(mixed * drive);
+            mixed = mixed * (1.0f - distortionLevel) + shaped * distortionLevel;
         }
 
         int py = midY - static_cast<int>(mixed * amplitude);
@@ -681,77 +692,80 @@ LRESULT PluginView::onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPAR
             if (draggedKnobIndex >= 0) {
                 SetCapture(hwnd);  // Receive WM_LBUTTONUP even if cursor leaves window
                 if (controller)
-                    controller->beginEdit(static_cast<Steinberg::Vst::ParamID>(draggedKnobIndex));
+                    controller->beginEdit(static_cast<Steinberg::Vst::ParamID>(knobs[draggedKnobIndex].paramID));
             }
             return 0;
         }
-        
+
         case WM_MOUSEMOVE: {
             if (draggedKnobIndex >= 0) {
                 int y = GET_Y_LPARAM(lParam);
-                
+
                 if (lastMouseY >= 0) {
                     int delta = lastMouseY - y;  // Up motion = positive = increase value
-                    
+
                     int currentValue = knobs[draggedKnobIndex].value;
                     int newValue = currentValue + delta;
-                    
+
                     // Clamp to 0-255
                     if (newValue < 0) newValue = 0;
                     if (newValue > 255) newValue = 255;
-                    
+
                     if (newValue != currentValue) {
                         knobs[draggedKnobIndex].value = newValue;
-                        if (controller) {
+                        const int pid = knobs[draggedKnobIndex].paramID;
+                        if (pid < 4)
+                            VSTVibe2Processor::oscillatorVolumes[pid] = newValue / 255.0f;
+                        if (controller)
                             controller->performEdit(
-                                static_cast<Steinberg::Vst::ParamID>(draggedKnobIndex),
+                                static_cast<Steinberg::Vst::ParamID>(pid),
                                 newValue / 255.0);
-                        }
                         render();
                         drawToWindow();
                     }
                 }
-                
+
                 lastMouseY = y;
             }
             return 0;
         }
-        
+
         case WM_LBUTTONUP: {
             if (draggedKnobIndex >= 0) {
                 ReleaseCapture();
                 if (controller)
-                    controller->endEdit(static_cast<Steinberg::Vst::ParamID>(draggedKnobIndex));
+                    controller->endEdit(static_cast<Steinberg::Vst::ParamID>(knobs[draggedKnobIndex].paramID));
             }
             draggedKnobIndex = -1;
             lastMouseY = -1;
             return 0;
         }
-        
+
         case WM_MOUSEWHEEL: {
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
-            
+
             // Convert screen coordinates to client coordinates
             POINT pt = {x, y};
             ScreenToClient(hwnd, &pt);
-            
+
             int knobIndex = getKnobAtPosition(pt.x, pt.y);
             if (knobIndex >= 0) {
                 int wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
                 int delta = (wheelDelta > 0) ? 5 : -5;
-                
+
                 int newValue = knobs[knobIndex].value + delta;
                 if (newValue < 0) newValue = 0;
                 if (newValue > 255) newValue = 255;
-                
+
                 knobs[knobIndex].value = newValue;
+                const int pid = knobs[knobIndex].paramID;
+                if (pid < 4)
+                    VSTVibe2Processor::oscillatorVolumes[pid] = newValue / 255.0f;
                 if (controller) {
-                    controller->beginEdit(static_cast<Steinberg::Vst::ParamID>(knobIndex));
-                    controller->performEdit(
-                        static_cast<Steinberg::Vst::ParamID>(knobIndex),
-                        newValue / 255.0);
-                    controller->endEdit(static_cast<Steinberg::Vst::ParamID>(knobIndex));
+                    controller->beginEdit(static_cast<Steinberg::Vst::ParamID>(pid));
+                    controller->performEdit(static_cast<Steinberg::Vst::ParamID>(pid), newValue / 255.0);
+                    controller->endEdit(static_cast<Steinberg::Vst::ParamID>(pid));
                 }
                 render();
                 drawToWindow();
@@ -818,7 +832,7 @@ void PluginView::drawToWindow() {
     );
     
     // Now render text overlays
-    drawTextToWindow(hdc, "MONODUCK 1.0", 20, 10, 0xFF000000);
+    drawTextToWindow(hdc, "MONODUCK 1.01", 20, 10, 0xFF000000);
     
     // Place labels just below the full dial draw extent (includes pointer protrusion)
     const int labelOffset = dialScreenExtent + 6;
@@ -862,21 +876,6 @@ int PluginView::getKnobAtPosition(int x, int y) const {
         }
     }
     return -1;
-}
-
-void PluginView::updateKnobValue(int knobIndex, int y) {
-    if (knobIndex >= 0 && knobIndex < static_cast<int>(knobs.size())) {
-        int cy = knobs[knobIndex].y;
-        int delta = cy - y;
-        int newValue = knobs[knobIndex].value + delta;
-        
-        if (newValue < 0) newValue = 0;
-        if (newValue > 255) newValue = 255;
-        
-        knobs[knobIndex].value = newValue;
-        render();
-        drawToWindow();
-    }
 }
 
 } // namespace VSTVibe2

@@ -9,14 +9,16 @@ namespace VSTVibe2 {
 
 // Parameter IDs for oscillator volumes
 enum ParamID {
-    kSineVolumeID = 0,
-    kSquareVolumeID = 1,
+    kSineVolumeID     = 0,
+    kSquareVolumeID   = 1,
     kTriangleVolumeID = 2,
-    kSawVolumeID = 3,
-    kSpiceID      = 4,
-    kPitchBendID  = 5,
-    kNoteActiveID = 6,
-    kSqueezeID    = 7
+    kSawVolumeID      = 3,
+    kSpiceID          = 4,
+    kPitchBendID      = 5,
+    kNoteActiveID     = 6,
+    kSqueezeID        = 7,
+    kGlideID          = 9,
+    kDistortionID     = 10
 };
 
 class VSTVibe2Controller : public Steinberg::Vst::EditController,
