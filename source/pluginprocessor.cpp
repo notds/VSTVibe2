@@ -3,6 +3,7 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include <cmath>
+#include <cstdint>
 #include <algorithm>
 
 #ifndef M_PI
@@ -86,12 +87,29 @@ static float applyCompressor(float sample, float squeeze,
     return sample * std::pow(10.0f, (-gainReductionDb + makeupDb) / 20.0f);
 }
 
-// Pre-gain tanh waveshaper. At low amounts: subtle saturation. At high: near hard clip.
+// Foldback distortion. Pre-gain drives signal above 1.0; iterative fold reflects back into [-1,1].
+// Above 50%: adds subtle white noise (max ~4% of full scale).
 static float applyDistortion(float sample, float amount) {
     if (amount < 1e-4f) return sample;
-    const float drive  = 1.0f + amount * 19.0f;   // 1× – 20× pre-gain
-    const float shaped = std::tanh(sample * drive); // tanh clamps to [-1, 1]
-    return sample * (1.0f - amount) + shaped * amount;
+
+    float x = sample * (1.0f + amount * 7.0f);
+    for (int i = 0; i < 8; ++i) {
+        if      (x >  1.0f) x =  2.0f - x;
+        else if (x < -1.0f) x = -2.0f - x;
+        else break;
+    }
+
+    float out = sample * (1.0f - amount) + x * amount;
+
+    if (amount > 0.5f) {
+        static uint32_t ns = 2463534242u;
+        ns ^= ns << 13; ns ^= ns >> 17; ns ^= ns << 5;
+        const float noise    = static_cast<float>(ns) * (1.0f / 4294967296.0f) * 2.0f - 1.0f;
+        const float noiseAmt = (amount - 0.5f) * 2.0f * 0.04f;
+        out += noise * noiseAmt;
+    }
+
+    return out;
 }
 
 float VSTVibe2Processor::mixOscillators(double phaseVal) {

@@ -56,11 +56,23 @@ private:
     double shakePhase    = 0.0;
     int    scrollOffset  = 0;
 
-    std::vector<uint32_t> waveformFeedback;
-    int    wfFeedbackW = 0;
-    int    wfFeedbackH = 0;
-    double waveformHue = 0.0;  // 0-360, cycles through bright colors
+    std::vector<uint32_t> waveformFeedback;  // Previous frame's waveBuffer (ARGB)
+    double waveformHue = 0.0;
     MandelbrotState mandelbrotState;
+
+    // Layered rendering buffers
+    std::vector<uint32_t> bgBuffer;    // Cached background (RGB) — repainted on resize only
+    std::vector<uint32_t> waveBuffer;  // Waveform layer (ARGB, transparent where undrawn)
+    std::vector<uint32_t> knobBuffer;  // Knob layer     (ARGB, transparent where undrawn)
+    std::vector<uint32_t> textBuffer;  // Text overlay   (ARGB, rebuilt when knobs change)
+    int  waveW = 0, waveH = 0;        // Current waveBuffer dimensions
+    int  lastRenderW = 0, lastRenderH = 0;
+
+    bool backgroundDirty = true;
+    bool knobLayerDirty  = true;
+
+    static constexpr int FULL_REDRAW_INTERVAL = 900;  // ~30 s at 30 fps
+    int fullRedrawCounter = FULL_REDRAW_INTERVAL;
 
     std::vector<uint32_t> dialImage;
     int    dialWidth  = 0;
@@ -72,7 +84,7 @@ private:
     int    dialScreenExtent = 0;    // Screen pixels needed to draw full image at any rotation
 
     void drawToWindow();
-    void drawTextToWindow(HDC hdc, const char* text, int x, int y, uint32_t color);
+    void drawTextLayer();
     void constrainSize();
     void initializeKnobs();
     void updateLayout();

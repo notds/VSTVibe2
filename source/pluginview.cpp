@@ -44,22 +44,27 @@ PluginView::PluginView()
     : Steinberg::CPluginView() {
     viewRect.right = 600;
     viewRect.bottom = 400;
-    pixelBuffer.resize(600 * 400);
-    
-    // Initialize white background (BGR format)
-    for (size_t i = 0; i < pixelBuffer.size(); ++i) {
-        pixelBuffer[i] = 0x00FFFFFF;  // White in BGR
-    }
-    
+    pixelBuffer.assign(600 * 400, 0x00FFFFFF);
+
     // Initialize GDI+ once per process; ref-count across instances
     if (gdiplusRefCount++ == 0) {
         GdiplusStartupInput gdiplusStartupInput;
         GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
     }
-    
+
     initializeKnobs();
     loadBackgroundImage();
     loadDialImage();
+
+    // After dial loading, compute minimum height so all row-2 content (knob + label + value
+    // text) clears the bottom edge by 5px:
+    //   content_bottom = row2y + dialScreenExtent + 6 (gap) + 14 (label line) + 16 (value line)
+    //   row2y = h * 0.82  =>  h >= (dialScreenExtent + 41) * 100 / 18  (+5px pad baked in)
+    const int minH = std::max(MIN_HEIGHT, (dialScreenExtent + 46) * 100 / 18 + 1);
+    const int w    = std::max(MIN_WIDTH, 600);
+    viewRect.right  = viewRect.left + w;
+    viewRect.bottom = viewRect.top  + minH;
+    pixelBuffer.assign(static_cast<size_t>(w * minH), 0x00FFFFFF);
 }
 
 PluginView::~PluginView() {
@@ -149,7 +154,7 @@ void PluginView::drawBackground() {
             const uint32_t r = (argb >> 16) & 0xFF;
             const uint32_t g = (argb >>  8) & 0xFF;
             const uint32_t b = (argb >>  0) & 0xFF;
-            pixelBuffer[py * winW + px] = (r << 16) | (g << 8) | b;
+            bgBuffer[py * winW + px] = (r << 16) | (g << 8) | b;
         }
     }
 }
@@ -294,26 +299,11 @@ void PluginView::drawDialImage(const Knob& knob) {
             const int py = cy + dy;
             if (px < 0 || px >= bufWidth || py < 0 || py >= bufHeight) continue;
 
-            // Convert ARGB → pixel-buffer format (0x00RRGGBB)
+            // Store ARGB into knob layer; compositing happens in render()
             const uint32_t r = (argb >> 16) & 0xFF;
             const uint32_t g = (argb >>  8) & 0xFF;
             const uint32_t b = (argb >>  0) & 0xFF;
-
-            if (alpha >= 240) {
-                // Fully opaque — write directly
-                pixelBuffer[py * bufWidth + px] = (r << 16) | (g << 8) | b;
-            } else {
-                // Alpha-blend over existing pixel
-                const uint32_t dst = pixelBuffer[py * bufWidth + px];
-                const uint32_t dstR = (dst >> 16) & 0xFF;
-                const uint32_t dstG = (dst >>  8) & 0xFF;
-                const uint32_t dstB = (dst >>  0) & 0xFF;
-                const uint32_t a255 = alpha;
-                const uint32_t blendR = (r * a255 + dstR * (255 - a255)) / 255;
-                const uint32_t blendG = (g * a255 + dstG * (255 - a255)) / 255;
-                const uint32_t blendB = (b * a255 + dstB * (255 - a255)) / 255;
-                pixelBuffer[py * bufWidth + px] = (blendR << 16) | (blendG << 8) | blendB;
-            }
+            knobBuffer[py * bufWidth + px] = (alpha << 24) | (r << 16) | (g << 8) | b;
         }
     }
 }
@@ -323,6 +313,7 @@ void PluginView::setKnobValue(int index, int value) {
     value = std::max(0, std::min(255, value));
     if (knobs[index].value == value) return;
     knobs[index].value = value;
+    knobLayerDirty = true;
     render();
     drawToWindow();
 }
@@ -419,80 +410,131 @@ void PluginView::updateLayout() {
 }
 
 void PluginView::render() {
-    const int width  = viewRect.right  - viewRect.left;
-    const int height = viewRect.bottom - viewRect.top;
+    const int w = viewRect.right  - viewRect.left;
+    const int h = viewRect.bottom - viewRect.top;
+    if (w <= 0 || h <= 0) return;
 
-    if (width <= 0 || height <= 0) return;
+    // Full-redraw safety timer (~30 s at 30 fps)
+    if (--fullRedrawCounter <= 0) {
+        fullRedrawCounter = FULL_REDRAW_INTERVAL;
+        backgroundDirty   = true;
+        knobLayerDirty    = true;
+        waveformFeedback.clear();
+    }
 
-    const size_t requiredSize = static_cast<size_t>(width * height);
-    if (pixelBuffer.size() != requiredSize)
-        pixelBuffer.resize(requiredSize, 0x00FFFFFF);
+    const size_t total = static_cast<size_t>(w * h);
 
-    for (size_t i = 0; i < pixelBuffer.size(); ++i)
-        pixelBuffer[i] = 0x00FFFFFF;
+    if (pixelBuffer.size() != total) pixelBuffer.assign(total, 0x00FFFFFFu);
+    if (bgBuffer.size()    != total) { bgBuffer.assign(total, 0x00FFFFFFu); backgroundDirty = true; }
+    if (knobBuffer.size()  != total) { knobBuffer.assign(total, 0u);        knobLayerDirty  = true; }
+    if (textBuffer.size()  != total) { textBuffer.assign(total, 0u);        knobLayerDirty  = true; }
 
-    updateLayout();
-    drawBackground();
+    // Layout: only recompute on resize
+    if (lastRenderW != w || lastRenderH != h) {
+        updateLayout();
+        knobLayerDirty = true;
+        lastRenderW = w;
+        lastRenderH = h;
+    }
+
+    // 1. Background (cached — only redrawn on resize / full-redraw)
+    if (backgroundDirty) {
+        std::fill(bgBuffer.begin(), bgBuffer.end(), 0x00FFFFFFu);
+        drawBackground();
+        backgroundDirty = false;
+    }
+
+    // 2. Copy background into composite buffer
+    std::copy(bgBuffer.begin(), bgBuffer.end(), pixelBuffer.begin());
+
+    // 3. Waveform into its own ARGB buffer, then composite
     drawWaveform();
+    for (int py = 0; py < waveH && py < h; ++py) {
+        for (int px = 0; px < waveW && px < w; ++px) {
+            const uint32_t src   = waveBuffer[py * waveW + px];
+            const uint32_t alpha = src >> 24;
+            if (!alpha) continue;
+            const uint32_t dst = pixelBuffer[py * w + px];
+            const uint32_t inv = 255 - alpha;
+            pixelBuffer[py * w + px] =
+                ((((src >> 16 & 0xFF) * alpha + (dst >> 16 & 0xFF) * inv) / 255) << 16) |
+                ((((src >>  8 & 0xFF) * alpha + (dst >>  8 & 0xFF) * inv) / 255) <<  8) |
+                 (((src       & 0xFF) * alpha + (dst       & 0xFF) * inv) / 255);
+        }
+    }
 
-    for (int i = 0; i < static_cast<int>(knobs.size()); ++i)
-        drawKnob(i);
+    // 4. Knob + text layers (cached together — rebuilt when any knob value changes)
+    if (knobLayerDirty) {
+        std::fill(knobBuffer.begin(), knobBuffer.end(), 0u);
+        for (int i = 0; i < static_cast<int>(knobs.size()); ++i)
+            drawKnob(i);
+        drawTextLayer();
+        knobLayerDirty = false;
+    }
+
+    // Helper: alpha-composite one cached ARGB layer over pixelBuffer
+    auto compositeLayer = [&](const std::vector<uint32_t>& layer) {
+        for (size_t i = 0; i < total; ++i) {
+            const uint32_t src   = layer[i];
+            const uint32_t alpha = src >> 24;
+            if (!alpha) continue;
+            const uint32_t dst = pixelBuffer[i];
+            const uint32_t inv = 255 - alpha;
+            pixelBuffer[i] =
+                ((((src >> 16 & 0xFF) * alpha + (dst >> 16 & 0xFF) * inv) / 255) << 16) |
+                ((((src >>  8 & 0xFF) * alpha + (dst >>  8 & 0xFF) * inv) / 255) <<  8) |
+                 (((src       & 0xFF) * alpha + (dst       & 0xFF) * inv) / 255);
+        }
+    };
+
+    // 5. Composite knob layer, then text layer
+    compositeLayer(knobBuffer);
+    compositeLayer(textBuffer);
 }
 
 void PluginView::drawWaveform() {
     if (knobs.size() < 4) return;
 
-    const int bufWidth  = viewRect.right  - viewRect.left;
-    const int bufHeight = viewRect.bottom - viewRect.top - 150;
-    const int x1 = 0, y1 = 0, x2 = bufWidth, y2 = bufHeight;
-    const int w  = x2 - x1;
-    const int h  = y2 - y1;
+    const int w = viewRect.right  - viewRect.left;
+    const int h = viewRect.bottom - viewRect.top - 150;
     if (w <= 0 || h <= 0) return;
 
+    // Resize waveBuffer if needed; invalidate feedback on size change
+    if (waveW != w || waveH != h) {
+        waveW = w;
+        waveH = h;
+        waveBuffer.assign(static_cast<size_t>(w * h), 0u);
+        waveformFeedback.clear();
+    }
+
+    // plot() writes into waveBuffer with full alpha
     auto plot = [&](int x, int y, uint32_t color) {
-        if (x >= 0 && x < bufWidth && y >= 0 && y < bufHeight)
-            pixelBuffer[y * bufWidth + x] = color;
+        if (x >= 0 && x < w && y >= 0 && y < h)
+            waveBuffer[y * w + x] = 0xFF000000u | color;
     };
 
-    // --- Background: previous frame scaled outward + 80% alpha blend ---
-    if (!waveformFeedback.empty() && wfFeedbackW == w && wfFeedbackH == h) {
-        // Expand content by 0-3px per axis independently each frame
+    // --- Feedback: scale-expanded previous waveBuffer, alpha-faded ---
+    // Pure waveform ARGB — background is not baked in, so the trail fades to transparent.
+    std::fill(waveBuffer.begin(), waveBuffer.end(), 0u);
+    if (!waveformFeedback.empty() && waveformFeedback.size() == waveBuffer.size()) {
         const double scaleX = static_cast<double>(w + (rand() % 4)) / w;
         const double scaleY = static_cast<double>(h + (rand() % 4)) / h;
-        const double cx = w * 0.5;
-        const double cy = h * 0.5;
+        const double cx = w * 0.5, cy = h * 0.5;
 
         for (int dy = 0; dy < h; ++dy) {
             for (int dx = 0; dx < w; ++dx) {
-                // Inverse-map: find source pixel in feedback that lands at (dx, dy)
                 const int srcX = static_cast<int>(cx + (dx - cx) / scaleX + 0.5);
                 const int srcY = static_cast<int>(cy + (dy - cy) / scaleY + 0.5);
-
-                const int px = x1 + dx;
-                const int py = y1 + dy;
-
-                // Current bg pixel (background image already drawn by drawBackground)
-                const uint32_t bg  = pixelBuffer[py * bufWidth + px];
-                const uint32_t bgR = (bg >> 16) & 0xFF;
-                const uint32_t bgG = (bg >>  8) & 0xFF;
-                const uint32_t bgB = (bg >>  0) & 0xFF;
-
-                if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
-                    const uint32_t prev = waveformFeedback[srcY * w + srcX];
-                    const uint32_t pR   = (prev >> 16) & 0xFF;
-                    const uint32_t pG   = (prev >>  8) & 0xFF;
-                    const uint32_t pB   = (prev >>  0) & 0xFF;
-                    // 95% previous frame + 5% background (net 5% alpha reduction per frame)
-                    pixelBuffer[py * bufWidth + px] =
-                        (((pR * 242 + bgR * 13) / 255) << 16) |
-                        (((pG * 242 + bgG * 13) / 255) <<  8) |
-                         ((pB * 242 + bgB * 13) / 255);
-                }
-                // else: keep existing background pixel at this position
+                if (srcX < 0 || srcX >= w || srcY < 0 || srcY >= h) continue;
+                const uint32_t prev = waveformFeedback[srcY * w + srcX];
+                const uint32_t a    = prev >> 24;
+                if (!a) continue;
+                const uint32_t newA = (a * 242) / 255;  // ~95% retention per frame
+                if (newA)
+                    waveBuffer[dy * w + dx] = (newA << 24) | (prev & 0x00FFFFFFu);
             }
         }
     }
-    // On first frame or after resize: background image shows through as-is
 
     // Advance shake LFO (~5 Hz at 30 fps)
     if (noteActive) {
@@ -509,8 +551,8 @@ void PluginView::drawWaveform() {
     scrollOffset -= 1;
 
     // --- Zero line ---
-    const int midY = (y1 + y2) / 2 + shakeOffsetY;
-    for (int x = x1 + 1; x < x2 - 1; ++x)
+    const int midY = h / 2 + shakeOffsetY;
+    for (int x = 1; x < w - 1; ++x)
         plot(x, midY, 0x00CCCCCC);
 
     // --- Waveform line ---
@@ -583,17 +625,28 @@ void PluginView::drawWaveform() {
             mixed *= std::pow(10.0f, (-reductDb + compMakeupDb) / 20.0f);
         }
 
-        // Distortion: tanh waveshaping — matches end of audio chain
+        // Distortion: foldback — mirrors audio chain
         if (distortionLevel > 1e-4f) {
-            const float drive  = 1.0f + distortionLevel * 19.0f;
-            const float shaped = std::tanh(mixed * drive);
-            mixed = mixed * (1.0f - distortionLevel) + shaped * distortionLevel;
+            float x = mixed * (1.0f + distortionLevel * 7.0f);
+            for (int fi = 0; fi < 8; ++fi) {
+                if      (x >  1.0f) x =  2.0f - x;
+                else if (x < -1.0f) x = -2.0f - x;
+                else break;
+            }
+            mixed = mixed * (1.0f - distortionLevel) + x * distortionLevel;
+
+            if (distortionLevel > 0.5f) {
+                const uint32_t hash  = static_cast<uint32_t>(s) * 2654435761u;
+                const float noise    = static_cast<float>(hash) * (1.0f / 4294967296.0f) * 2.0f - 1.0f;
+                const float noiseAmt = (distortionLevel - 0.5f) * 2.0f * 0.04f;
+                mixed += noise * noiseAmt;
+            }
         }
 
         int py = midY - static_cast<int>(mixed * amplitude);
-        py = std::max(y1 + 1, std::min(y2 - 2, py));
+        py = std::max(1, std::min(h - 2, py));
 
-        int bx = x1 + 1 + s + shakeOffsetX;
+        int bx = 1 + s + shakeOffsetX;
         if (prevPy >= 0) {
             int yStart = std::min(prevPy, py);
             int yEnd   = std::max(prevPy, py);
@@ -605,13 +658,8 @@ void PluginView::drawWaveform() {
         prevPy = py;
     }
 
-    // --- Save waveform area as feedback for next frame ---
-    wfFeedbackW = w;
-    wfFeedbackH = h;
-    waveformFeedback.resize(w * h);
-    for (int dy = 0; dy < h; ++dy)
-        for (int dx = 0; dx < w; ++dx)
-            waveformFeedback[dy * w + dx] = pixelBuffer[(y1 + dy) * bufWidth + (x1 + dx)];
+    // Save waveBuffer as feedback for next frame (pure waveform ARGB, no background)
+    waveformFeedback = waveBuffer;
 }
 
 void PluginView::drawKnob(int knobIndex) {
@@ -639,7 +687,7 @@ void PluginView::drawKnob(int knobIndex) {
         int lx = cx + (steps > 0 ? (x2 - cx) * s / steps : 0);
         int ly = cy + (steps > 0 ? (y2 - cy) * s / steps : 0);
         if (lx >= 0 && lx < bufWidth && ly >= 0 && ly < bufHeight) {
-            pixelBuffer[ly * bufWidth + lx] = 0x00000000;  // Black indicator
+            knobBuffer[ly * bufWidth + lx] = 0xFF000000u;  // Full-alpha black in knob layer
         }
     }
 
@@ -647,30 +695,60 @@ void PluginView::drawKnob(int knobIndex) {
     drawDialImage(knob);
 }
 
-void PluginView::drawTextToWindow(HDC hdc, const char* text, int x, int y, uint32_t color) {
-    if (!text) return;
+void PluginView::drawTextLayer() {
+    const int w = viewRect.right  - viewRect.left;
+    const int h = viewRect.bottom - viewRect.top;
+    if (w <= 0 || h <= 0) return;
 
-    Graphics graphics(hdc);
-    graphics.SetSmoothingMode(SmoothingModeAntiAlias);
+    std::fill(textBuffer.begin(), textBuffer.end(), 0u);
 
-    Font font(L"Arial", 9, FontStyleBold);
-    
+    // Render directly into textBuffer via a GDI+ Bitmap wrapping the same memory
+    Bitmap bmp(w, h, w * 4, PixelFormat32bppARGB, (BYTE*)textBuffer.data());
+    Graphics gr(&bmp);
+    gr.SetSmoothingMode(SmoothingModeAntiAlias);
+    gr.SetTextRenderingHint(TextRenderingHintAntiAlias);
 
-    wchar_t wText[256];
-    MultiByteToWideChar(CP_ACP, 0, text, -1, wText, 256);
+    Font        font(L"Arial", 9, FontStyleBold);
+    SolidBrush  black(Color(255, 0, 0, 0));
+    SolidBrush  boxBrush(Color(185, 255, 255, 255));  // ~73% opaque white backing
+    StringFormat sf;
+    sf.SetAlignment(StringAlignmentCenter);
+    sf.SetLineAlignment(StringAlignmentNear);
 
-    int b = (color >> 0) & 0xFF;
-    int g = (color >> 8) & 0xFF;
-    int r = (color >> 16) & 0xFF;
+    // Title — measure, draw one box, then black text
+    {
+        RectF m;
+        gr.MeasureString(L"MONODUCK 1.02", -1, &font, PointF(0, 0), &m);
+        gr.FillRectangle(&boxBrush, RectF(18.0f, 7.0f, m.Width + 6.0f, m.Height + 6.0f));
+        gr.DrawString(L"MONODUCK 1.02", -1, &font, PointF(21.0f, 10.0f), &black);
+    }
 
-    // White shadow offset by 2px
-    SolidBrush shadowBrush(Color(255, 255, 255, 255));
-    PointF shadowPt(static_cast<REAL>(x + 1), static_cast<REAL>(y + 1));
-    graphics.DrawString(wText, -1, &font, shadowPt, &shadowBrush);
+    // Knob labels + percentage: one box per knob, both strings centered inside it
+    const int labelOffset = dialScreenExtent + 6;
+    for (const auto& knob : knobs) {
+        wchar_t wLabel[64], wAmp[16];
+        MultiByteToWideChar(CP_ACP, 0, knob.label, -1, wLabel, 64);
+        char ampBuf[16];
+        snprintf(ampBuf, sizeof(ampBuf), "%d%%", (knob.value * 100) / 255);
+        MultiByteToWideChar(CP_ACP, 0, ampBuf, -1, wAmp, 16);
 
-    SolidBrush brush(Color(255, r, g, b));
-    PointF pointF(static_cast<REAL>(x), static_cast<REAL>(y));
-    graphics.DrawString(wText, -1, &font, pointF, &brush);
+        RectF mLabel, mAmp;
+        gr.MeasureString(wLabel, -1, &font, PointF(0, 0), &mLabel);
+        gr.MeasureString(wAmp,   -1, &font, PointF(0, 0), &mAmp);
+
+        const float lineH = mLabel.Height;
+        const float boxW  = std::max(mLabel.Width, mAmp.Width) + 10.0f;
+        const float boxH  = lineH * 2.0f + 6.0f;
+        const float boxX  = static_cast<float>(knob.x) - boxW * 0.5f;
+        const float boxY  = static_cast<float>(knob.y + labelOffset);
+
+        // One white box behind both lines
+        gr.FillRectangle(&boxBrush, RectF(boxX - 2.0f, boxY - 2.0f, boxW + 4.0f, boxH + 4.0f));
+
+        // Centered black text: label on top, percentage below
+        gr.DrawString(wLabel, -1, &font, RectF(boxX, boxY,              boxW, lineH),        &sf, &black);
+        gr.DrawString(wAmp,   -1, &font, RectF(boxX, boxY + lineH + 3, boxW, lineH),        &sf, &black);
+    }
 }
 
 void PluginView::invalidateRect() {
@@ -713,6 +791,7 @@ LRESULT PluginView::onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPAR
 
                     if (newValue != currentValue) {
                         knobs[draggedKnobIndex].value = newValue;
+                        knobLayerDirty = true;
                         const int pid = knobs[draggedKnobIndex].paramID;
                         if (pid < 4)
                             VSTVibe2Processor::oscillatorVolumes[pid] = newValue / 255.0f;
@@ -759,6 +838,7 @@ LRESULT PluginView::onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPAR
                 if (newValue > 255) newValue = 255;
 
                 knobs[knobIndex].value = newValue;
+                knobLayerDirty = true;
                 const int pid = knobs[knobIndex].paramID;
                 if (pid < 4)
                     VSTVibe2Processor::oscillatorVolumes[pid] = newValue / 255.0f;
@@ -796,74 +876,43 @@ LRESULT PluginView::onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPAR
 }
 
 void PluginView::drawToWindow() {
-    if (!platformWindow) {
-        return;
-    }
-    
-    HWND hwnd = static_cast<HWND>(platformWindow);
-    HDC hdc = GetDC(hwnd);
-    if (!hdc) {
-        return;
-    }
-    
-    int width = viewRect.right - viewRect.left;
-    int height = viewRect.bottom - viewRect.top;
-    
-    if (width <= 0 || height <= 0 || pixelBuffer.empty()) {
-        ReleaseDC(hwnd, hdc);
-        return;
-    }
-    
-    BITMAPINFO bmi = {};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    
-    SetDIBitsToDevice(
-        hdc,
-        0, 0, width, height,
-        0, 0, 0, height,
-        pixelBuffer.data(),
-        &bmi,
-        DIB_RGB_COLORS
-    );
-    
-    // Now render text overlays
-    drawTextToWindow(hdc, "MONODUCK 1.01", 20, 10, 0xFF000000);
-    
-    // Place labels just below the full dial draw extent (includes pointer protrusion)
-    const int labelOffset = dialScreenExtent + 6;
-    for (const auto& knob : knobs) {
-        drawTextToWindow(hdc, knob.label, knob.x - 15, knob.y + labelOffset, 0xFF000000);
+    if (!platformWindow || pixelBuffer.empty()) return;
 
-        char ampText[16];
-        snprintf(ampText, sizeof(ampText), "%d%%", (knob.value * 100) / 255);
-        drawTextToWindow(hdc, ampText, knob.x - 12, knob.y + labelOffset + 14, 0xFF000080);
+    HWND hwnd = static_cast<HWND>(platformWindow);
+    HDC  hdc  = GetDC(hwnd);
+    if (!hdc) return;
+
+    const int w = viewRect.right  - viewRect.left;
+    const int h = viewRect.bottom - viewRect.top;
+
+    if (w > 0 && h > 0) {
+        BITMAPINFO bmi          = {};
+        bmi.bmiHeader.biSize    = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth   = w;
+        bmi.bmiHeader.biHeight  = -h;  // top-down
+        bmi.bmiHeader.biPlanes  = 1;
+        bmi.bmiHeader.biBitCount    = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        // Single blit — pixelBuffer already has all layers composited
+        SetDIBitsToDevice(hdc, 0, 0, w, h, 0, 0, 0, h,
+                          pixelBuffer.data(), &bmi, DIB_RGB_COLORS);
     }
-    
+
     ReleaseDC(hwnd, hdc);
 }
 
 void PluginView::constrainSize() {
-    int width = viewRect.right - viewRect.left;
+    // Same formula as constructor: ensures row-2 labels never clip during resize
+    const int contentMinH = std::max(MIN_HEIGHT, (dialScreenExtent + 46) * 100 / 18 + 1);
+
+    int width  = viewRect.right  - viewRect.left;
     int height = viewRect.bottom - viewRect.top;
-    
-    if (width < MIN_WIDTH) {
-        viewRect.right = viewRect.left + MIN_WIDTH;
-    }
-    if (height < MIN_HEIGHT) {
-        viewRect.bottom = viewRect.top + MIN_HEIGHT;
-    }
-    
-    if (width > MAX_WIDTH) {
-        viewRect.right = viewRect.left + MAX_WIDTH;
-    }
-    if (height > MAX_HEIGHT) {
-        viewRect.bottom = viewRect.top + MAX_HEIGHT;
-    }
+
+    if (width  < MIN_WIDTH)   viewRect.right  = viewRect.left + MIN_WIDTH;
+    if (height < contentMinH) viewRect.bottom = viewRect.top  + contentMinH;
+    if (width  > MAX_WIDTH)   viewRect.right  = viewRect.left + MAX_WIDTH;
+    if (height > MAX_HEIGHT)  viewRect.bottom = viewRect.top  + MAX_HEIGHT;
 }
 
 int PluginView::getKnobAtPosition(int x, int y) const {

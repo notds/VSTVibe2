@@ -20,7 +20,7 @@ BEGIN_FACTORY_DEF("MONODUCK", "https://drsuds.com", "mailto:drsuds@gmail.com")
                stringPluginName,
                Vst::kDistributable,
                "Instrument",
-               "1.0.1",
+               "1.0.2",
                kVstVersionString,
                VSTVibe2::createProcessorInstance)
 
@@ -30,7 +30,7 @@ BEGIN_FACTORY_DEF("MONODUCK", "https://drsuds.com", "mailto:drsuds@gmail.com")
                stringPluginName " Controller",
                0,
                "",
-               "1.0.1",
+               "1.0.2",
                kVstVersionString,
                VSTVibe2::createControllerInstance)
 
