@@ -2,7 +2,9 @@
 #include "pluginprocessor.h"
 #include "plugincontroller.h"
 
-#define stringPluginName "MONODUCK 1.01"
+#include "version.h"
+#define stringPluginVersion MONODUCK_VERSION
+#define stringPluginName    MONODUCK_NAME
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -20,7 +22,7 @@ BEGIN_FACTORY_DEF("MONODUCK", "https://drsuds.com", "mailto:drsuds@gmail.com")
                stringPluginName,
                Vst::kDistributable,
                "Instrument",
-               "1.0.2",
+               stringPluginVersion,
                kVstVersionString,
                VSTVibe2::createProcessorInstance)
 
@@ -30,7 +32,7 @@ BEGIN_FACTORY_DEF("MONODUCK", "https://drsuds.com", "mailto:drsuds@gmail.com")
                stringPluginName " Controller",
                0,
                "",
-               "1.0.2",
+               stringPluginVersion,
                kVstVersionString,
                VSTVibe2::createControllerInstance)
 

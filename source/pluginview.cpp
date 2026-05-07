@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include "pluginview.h"
+#include "version.h"
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
@@ -762,9 +763,9 @@ void PluginView::drawTextLayer() {
     // Title — measure, draw one box, then black text
     {
         RectF m;
-        gr.MeasureString(L"MONODUCK 1.02", -1, &font, PointF(0, 0), &m);
+        gr.MeasureString(MONODUCK_NAME_W, -1, &font, PointF(0, 0), &m);
         gr.FillRectangle(&boxBrush, RectF(18.0f, 7.0f, m.Width + 6.0f, m.Height + 6.0f));
-        gr.DrawString(L"MONODUCK 1.02", -1, &font, PointF(21.0f, 10.0f), &black);
+        gr.DrawString(MONODUCK_NAME_W, -1, &font, PointF(21.0f, 10.0f), &black);
     }
 
     // Knob labels + percentage: one box per knob, both strings centered inside it
