@@ -2,27 +2,29 @@
 #define NOMINMAX
 #endif
 #include "pluginview.h"
-#include <windows.h>
-#include <windowsx.h>
-#include <objidl.h>
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
+#include "mandelbrot_shaper.h"
+#include "pluginprocessor.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#include <windowsx.h>
+#include <objidl.h>
 #include <unordered_map>
 #include "dial_image_data.h"
 #include "bg_image_data.h"
-#include "mandelbrot_shaper.h"
-#include "pluginprocessor.h"
 #include <gdiplus.h>
-
-
 #pragma comment(lib, "gdiplus.lib")
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifdef _WIN32
 using namespace Gdiplus;
 
 namespace VSTVibe2 {
@@ -30,7 +32,6 @@ namespace VSTVibe2 {
 static ULONG_PTR gdiplusToken    = 0;
 static int        gdiplusRefCount = 0;
 
-// Maps each host HWND to its PluginView — avoids touching GWLP_USERDATA which the host may own
 static std::unordered_map<HWND, PluginView*> g_hwndToView;
 
 LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -40,51 +41,58 @@ LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
+#else
+namespace VSTVibe2 {
+#endif
+
 PluginView::PluginView()
     : Steinberg::CPluginView() {
-    viewRect.right = 600;
+    viewRect.right  = 600;
     viewRect.bottom = 400;
+    initializeKnobs();
+#ifdef _WIN32
     pixelBuffer.assign(600 * 400, 0x00FFFFFF);
 
-    // Initialize GDI+ once per process; ref-count across instances
     if (gdiplusRefCount++ == 0) {
         GdiplusStartupInput gdiplusStartupInput;
         GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
     }
 
-    initializeKnobs();
     loadBackgroundImage();
     loadDialImage();
 
-    // After dial loading, compute minimum height so all row-2 content (knob + label + value
-    // text) clears the bottom edge by 5px:
-    //   content_bottom = row2y + dialScreenExtent + 6 (gap) + 14 (label line) + 16 (value line)
-    //   row2y = h * 0.82  =>  h >= (dialScreenExtent + 41) * 100 / 18  (+5px pad baked in)
     const int minH = std::max(MIN_HEIGHT, (dialScreenExtent + 46) * 100 / 18 + 1);
     const int w    = std::max(MIN_WIDTH, 600);
     viewRect.right  = viewRect.left + w;
     viewRect.bottom = viewRect.top  + minH;
     pixelBuffer.assign(static_cast<size_t>(w * minH), 0x00FFFFFF);
+#endif
 }
 
 PluginView::~PluginView() {
+#ifdef _WIN32
     if (--gdiplusRefCount == 0) {
         Gdiplus::GdiplusShutdown(gdiplusToken);
         gdiplusToken = 0;
     }
+#endif
 }
 
 void PluginView::initializeKnobs() {
     knobs.clear();
-    knobs.push_back({80,  200, KNOB_SIZE, 255, "Sine",     0}); // kSineVolumeID
-    knobs.push_back({180, 200, KNOB_SIZE, 255, "Square",   1}); // kSquareVolumeID
-    knobs.push_back({280, 200, KNOB_SIZE, 255, "Triangle", 2}); // kTriangleVolumeID
-    knobs.push_back({380, 200, KNOB_SIZE, 255, "Saw",      3}); // kSawVolumeID
+    knobs.push_back({80,  200, KNOB_SIZE, 255, "Sine",        0}); // kSineVolumeID
+    knobs.push_back({180, 200, KNOB_SIZE, 255, "Square",      1}); // kSquareVolumeID
+    knobs.push_back({280, 200, KNOB_SIZE, 255, "Triangle",    2}); // kTriangleVolumeID
+    knobs.push_back({380, 200, KNOB_SIZE, 255, "Saw",         3}); // kSawVolumeID
+    knobs.push_back({480, 200, KNOB_SIZE,   0, "Sassiness",  11}); // kSassinessID
     knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice",       4}); // kSpiceID
     knobs.push_back({450, 320, KNOB_SIZE,   0, "Squeeze",     7}); // kSqueezeID
     knobs.push_back({600, 320, KNOB_SIZE,   0, "Glide",       9}); // kGlideID
     knobs.push_back({750, 320, KNOB_SIZE,   0, "Distortion", 10}); // kDistortionID
+    knobs.push_back({900, 320, KNOB_SIZE,   0, "XOR Rand",   12}); // kXorRandID
 }
+
+#ifdef _WIN32  // ---- All rendering below is Windows/GDI+ only ----
 
 void PluginView::loadBackgroundImage() {
     HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, kBgPngSize);
@@ -259,7 +267,28 @@ void PluginView::loadDialImage() {
         dialScreenExtent = KNOB_SIZE / 2;
 }
 
-void PluginView::drawDialImage(const Knob& knob) {
+// Fixed hues per knob index — red/pink/purple/blue family, same every run
+static constexpr float kKnobHues[] = { 355.0f, 340.0f, 320.0f, 300.0f, 280.0f, 260.0f, 240.0f, 220.0f };
+
+static void hsvToRgb(float h, float s, float v, uint8_t& r, uint8_t& g, uint8_t& b) {
+    h = std::fmod(h, 360.0f);
+    if (h < 0.0f) h += 360.0f;
+    const float c  = v * s;
+    const float x  = c * (1.0f - std::abs(std::fmod(h / 60.0f, 2.0f) - 1.0f));
+    const float m  = v - c;
+    float rf, gf, bf;
+    if      (h < 60.0f)  { rf = c; gf = x; bf = 0; }
+    else if (h < 120.0f) { rf = x; gf = c; bf = 0; }
+    else if (h < 180.0f) { rf = 0; gf = c; bf = x; }
+    else if (h < 240.0f) { rf = 0; gf = x; bf = c; }
+    else if (h < 300.0f) { rf = x; gf = 0; bf = c; }
+    else                 { rf = c; gf = 0; bf = x; }
+    r = static_cast<uint8_t>((rf + m) * 255.0f + 0.5f);
+    g = static_cast<uint8_t>((gf + m) * 255.0f + 0.5f);
+    b = static_cast<uint8_t>((bf + m) * 255.0f + 0.5f);
+}
+
+void PluginView::drawDialImage(const Knob& knob, int knobIndex) {
     if (dialImage.empty() || dialWidth <= 0 || dialHeight <= 0 || dialRadius <= 0.0) return;
 
     const int cx = knob.x;
@@ -267,6 +296,8 @@ void PluginView::drawDialImage(const Knob& knob) {
     const int radius = knob.size / 2;
     const int bufWidth  = viewRect.right  - viewRect.left;
     const int bufHeight = viewRect.bottom - viewRect.top;
+
+    const float hue = kKnobHues[knobIndex % 8];
 
     // Knob value (0-255) → angle over 270° range, starting at -135°, +50° clockwise offset
     const double angle = (knob.value / 255.0) * (270.0 * M_PI / 180.0) - (135.0 * M_PI / 180.0) + (50.0 * M_PI / 180.0);
@@ -299,11 +330,14 @@ void PluginView::drawDialImage(const Knob& knob) {
             const int py = cy + dy;
             if (px < 0 || px >= bufWidth || py < 0 || py >= bufHeight) continue;
 
-            // Store ARGB into knob layer; compositing happens in render()
-            const uint32_t r = (argb >> 16) & 0xFF;
-            const uint32_t g = (argb >>  8) & 0xFF;
-            const uint32_t b = (argb >>  0) & 0xFF;
-            knobBuffer[py * bufWidth + px] = (alpha << 24) | (r << 16) | (g << 8) | b;
+            // Colorize: preserve luminance (V), fix hue and saturation per knob index
+            const float rN = ((argb >> 16) & 0xFF) / 255.0f;
+            const float gN = ((argb >>  8) & 0xFF) / 255.0f;
+            const float bN = ((argb >>  0) & 0xFF) / 255.0f;
+            const float v  = std::max({rN, gN, bN});
+            uint8_t cr, cg, cb;
+            hsvToRgb(hue, 0.80f, v, cr, cg, cb);
+            knobBuffer[py * bufWidth + px] = (alpha << 24) | (cr << 16u) | (cg << 8u) | cb;
         }
     }
 }
@@ -388,8 +422,8 @@ void PluginView::updateLayout() {
     const int h = viewRect.bottom - viewRect.top;
     if (knobs.empty() || w <= 0 || h <= 0) return;
 
-    // Row 1: first 4 knobs, evenly spaced across full width
-    const int row1Count   = std::min(4, static_cast<int>(knobs.size()));
+    // Row 1: first 5 knobs, evenly spaced across full width
+    const int row1Count   = std::min(5, static_cast<int>(knobs.size()));
     const int row1Y       = h * 52 / 100;
     const int row1Spacing = w / (row1Count + 1);
     for (int i = 0; i < row1Count; ++i) {
@@ -536,6 +570,12 @@ void PluginView::drawWaveform() {
         }
     }
 
+    // Noise envelope: instant attack on note-on, ~150ms exponential decay at ~30fps
+    if (noteActive)
+        visualNoiseEnv = 1.0f;
+    else
+        visualNoiseEnv *= 0.8007f;  // exp(-1 / (30 * 0.150))
+
     // Advance shake LFO (~5 Hz at 30 fps)
     if (noteActive) {
         shakePhase += 1 / 30.0;
@@ -635,10 +675,10 @@ void PluginView::drawWaveform() {
             }
             mixed = mixed * (1.0f - distortionLevel) + x * distortionLevel;
 
-            if (distortionLevel > 0.5f) {
+            if (distortionLevel > 0.5f && visualNoiseEnv > 1e-4f) {
                 const uint32_t hash  = static_cast<uint32_t>(s) * 2654435761u;
                 const float noise    = static_cast<float>(hash) * (1.0f / 4294967296.0f) * 2.0f - 1.0f;
-                const float noiseAmt = (distortionLevel - 0.5f) * 2.0f * 0.04f;
+                const float noiseAmt = (distortionLevel - 0.5f) * 2.0f * 0.04f * visualNoiseEnv;
                 mixed += noise * noiseAmt;
             }
         }
@@ -692,7 +732,7 @@ void PluginView::drawKnob(int knobIndex) {
     }
 
     // Draw dial.png on top, alpha-blended and rotated to match knob position
-    drawDialImage(knob);
+    drawDialImage(knob, knobIndex);
 }
 
 void PluginView::drawTextLayer() {
@@ -926,5 +966,42 @@ int PluginView::getKnobAtPosition(int x, int y) const {
     }
     return -1;
 }
+
+#else  // !_WIN32 — Mac/Linux stubs ----------------------------------------
+
+void PluginView::loadBackgroundImage() {}
+void PluginView::loadDialImage()       {}
+void PluginView::drawBackground()      {}
+void PluginView::drawWaveform()        {}
+void PluginView::drawKnob(int)         {}
+void PluginView::drawDialImage(const Knob&, int) {}
+void PluginView::drawTextLayer()       {}
+void PluginView::drawToWindow()        {}
+void PluginView::constrainSize()       {}
+void PluginView::invalidateRect()      {}
+void PluginView::render()              {}
+
+Steinberg::tresult PLUGIN_API PluginView::isPlatformTypeSupported(const char* type) {
+    // Accept NSView on macOS; reject everything else
+    if (type && strcmp(type, "NSView") == 0) return Steinberg::kResultTrue;
+    return Steinberg::kResultFalse;
+}
+Steinberg::tresult PLUGIN_API PluginView::attached(void* /*parent*/, const char* /*type*/) {
+    return Steinberg::kResultFalse;  // No GUI on non-Windows builds
+}
+Steinberg::tresult PLUGIN_API PluginView::removed() {
+    platformWindow = nullptr;
+    return Steinberg::kResultOk;
+}
+Steinberg::tresult PLUGIN_API PluginView::onSize(Steinberg::ViewRect* newSize) {
+    if (newSize) viewRect = *newSize;
+    return Steinberg::kResultOk;
+}
+Steinberg::tresult PLUGIN_API PluginView::getSize(Steinberg::ViewRect* size) {
+    if (size) { *size = viewRect; return Steinberg::kResultOk; }
+    return Steinberg::kResultFalse;
+}
+
+#endif // _WIN32
 
 } // namespace VSTVibe2

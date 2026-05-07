@@ -4,6 +4,9 @@
 #include "mandelbrot_shaper.h"
 #include <vector>
 #include <cmath>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 namespace VSTVibe2 {
 
@@ -13,7 +16,7 @@ static const Steinberg::FUID kVSTVibe2ControllerUID (0x11223344, 0x55667788, 0x9
 class VSTVibe2Processor : public Steinberg::Vst::AudioEffect {
 public:
     VSTVibe2Processor();
-    ~VSTVibe2Processor() override = default;
+    ~VSTVibe2Processor() override;
 
     inline static std::vector<float> oscillatorVolumes = {1.0f, 1.0f, 1.0f, 1.0f};
 
@@ -52,7 +55,19 @@ private:
     float glide              = 0.0f;
     float distortion         = 0.0f;
     float compressorEnv      = 0.0f;
+    float noiseEnv           = 0.0f;
+    float sassiness          = 0.0f;
+    float xorRand            = 0.0f;
+    uint32_t xorRandState    = 2463534242u;
     MandelbrotState mandelbrotState;
+
+    // TTS playback
+    std::vector<float>  ttsBuffer;                  // Currently playing (audio thread only)
+    std::vector<float>  ttsPending;                 // Filled by TTS thread
+    std::atomic<bool>   ttsPendingReady{false};
+    double              ttsReadPos    = 0.0;  // Fractional for pitch-shifting
+    std::atomic<bool>   ttsRunning{false};
+    std::thread         ttsThread;
 
     float generateSineWave(double phase);
     float generateSquareWave(double phase);

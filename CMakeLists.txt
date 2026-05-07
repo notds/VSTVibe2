@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(VSTVibe2 VERSION 1.0.2 LANGUAGES CXX)
+project(VSTVibe2 VERSION 1.0.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,16 +51,31 @@ add_library(vst3_sdk STATIC
 target_include_directories(vst3_sdk PRIVATE ${VST3_SDK_ROOT})
 target_link_libraries(vst3_sdk PRIVATE vst3_base)
 
-add_library(VSTVibe2 SHARED
+set(VSTVIBE2_SOURCES
   source/pluginprocessor.cpp
   source/plugincontroller.cpp
   source/pluginview.cpp
   source/entry.cpp
 )
 
+if(APPLE)
+  list(APPEND VSTVIBE2_SOURCES source/tts_mac.mm)
+  set_source_files_properties(source/tts_mac.mm PROPERTIES COMPILE_FLAGS "-x objective-c++")
+endif()
+
+add_library(VSTVibe2 SHARED ${VSTVIBE2_SOURCES})
+
 target_compile_definitions(VSTVibe2 PRIVATE NOMINMAX)
 target_include_directories(VSTVibe2 PRIVATE ${VST3_SDK_ROOT})
-target_link_libraries(VSTVibe2 PRIVATE vst3_sdk vst3_base gdiplus.lib)
+target_link_libraries(VSTVibe2 PRIVATE vst3_sdk vst3_base)
+
+if(WIN32)
+  target_link_libraries(VSTVibe2 PRIVATE gdiplus.lib ole32.lib)
+endif()
+
+if(APPLE)
+  target_link_libraries(VSTVibe2 PRIVATE "-framework AVFoundation" "-framework Foundation")
+endif()
 
 if(MSVC)
   target_compile_options(VSTVibe2 PRIVATE /EHsc /W4)

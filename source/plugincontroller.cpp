@@ -41,6 +41,12 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::initialize(Steinberg::FUnknown
         STR16("Distortion"), kDistortionID, STR16("%"), 0.0, 1.0, 0.0));
 
     parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Sassiness"), kSassinessID, STR16("%"), 0.0, 1.0, 0.0));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("XOR Rand"), kXorRandID, STR16("%"), 0.0, 1.0, 0.0));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
         STR16("Note Active"), kNoteActiveID, STR16(""), 0.0, 1.0, 0.0));
 
     parameters.addParameter(new Steinberg::Vst::RangeParameter(
@@ -71,14 +77,18 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::setParamNormalized(Steinberg::
             pluginView->setKnobValue(static_cast<int>(tag), static_cast<int>(value * 255.0));
         } else if (tag == kNoteActiveID) {
             pluginView->setNoteActive(value > 0.5);
-        } else if (tag == kSpiceID) {
+        } else if (tag == kSassinessID) {
             pluginView->setKnobValue(4, static_cast<int>(value * 255.0));
-        } else if (tag == kSqueezeID) {
+        } else if (tag == kSpiceID) {
             pluginView->setKnobValue(5, static_cast<int>(value * 255.0));
-        } else if (tag == kGlideID) {
+        } else if (tag == kSqueezeID) {
             pluginView->setKnobValue(6, static_cast<int>(value * 255.0));
-        } else if (tag == kDistortionID) {
+        } else if (tag == kGlideID) {
             pluginView->setKnobValue(7, static_cast<int>(value * 255.0));
+        } else if (tag == kDistortionID) {
+            pluginView->setKnobValue(8, static_cast<int>(value * 255.0));
+        } else if (tag == kXorRandID) {
+            pluginView->setKnobValue(9, static_cast<int>(value * 255.0));
         }
     }
     return result;

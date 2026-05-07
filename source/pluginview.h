@@ -4,7 +4,9 @@
 #include "public.sdk/source/common/pluginview.h"
 #include "mandelbrot_shaper.h"
 #include <vector>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 namespace VSTVibe2 {
 
@@ -46,13 +48,16 @@ private:
     std::vector<Knob> knobs;
     int draggedKnobIndex = -1;
     int lastMouseY = -1;
+#ifdef _WIN32
     WNDPROC originalWindowProc = nullptr;
+#endif
     Steinberg::Vst::EditController* controller = nullptr;
     std::vector<uint32_t> bgImage;
     int bgWidth  = 0;
     int bgHeight = 0;
 
     bool   noteActive    = false;
+    float  visualNoiseEnv = 0.0f;  // Mirrors audio noiseEnv; decays ~150ms at ~30fps
     double shakePhase    = 0.0;
     int    scrollOffset  = 0;
 
@@ -93,12 +98,14 @@ private:
     void loadBackgroundImage();
     void drawBackground();
     void loadDialImage();
-    void drawDialImage(const Knob& knob);
+    void drawDialImage(const Knob& knob, int knobIndex);
     int getKnobAtPosition(int x, int y) const;
     void invalidateRect();
 
+#ifdef _WIN32
     friend LRESULT CALLBACK WindowProcStub(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT onWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+#endif
 };
 
 } // namespace VSTVibe2

@@ -18,7 +18,9 @@ enum ParamID {
     kNoteActiveID     = 6,
     kSqueezeID        = 7,
     kGlideID          = 9,
-    kDistortionID     = 10
+    kDistortionID     = 10,
+    kSassinessID      = 11,
+    kXorRandID        = 12
 };
 
 class VSTVibe2Controller : public Steinberg::Vst::EditController,
