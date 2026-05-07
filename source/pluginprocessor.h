@@ -57,15 +57,22 @@ private:
     float compressorEnv      = 0.0f;
     float noiseEnv           = 0.0f;
     float sassiness          = 0.0f;
+    float frassiness         = 0.5f;
+    float chattiness         = 0.0f;
     float xorRand            = 0.0f;
     uint32_t xorRandState    = 2463534242u;
+    float attack             = 0.0f;
+    float release            = 0.0f;
+    float ampEnv             = 0.0f;
     MandelbrotState mandelbrotState;
 
     // TTS playback
     std::vector<float>  ttsBuffer;                  // Currently playing (audio thread only)
     std::vector<float>  ttsPending;                 // Filled by TTS thread
     std::atomic<bool>   ttsPendingReady{false};
-    double              ttsReadPos    = 0.0;  // Fractional for pitch-shifting
+    double              ttsReadPos           = 0.0;
+    double              ttsSilenceRemaining  = 0.0;  // >=0: counting down; -1: not armed; 0: ready to swap
+    int                 ttsWordFadeIn        = 0;    // output-sample fade-in counter per word
     std::atomic<bool>   ttsRunning{false};
     std::thread         ttsThread;
 

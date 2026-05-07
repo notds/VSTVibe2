@@ -61,7 +61,7 @@ PluginView::PluginView()
     loadBackgroundImage();
     loadDialImage();
 
-    const int minH = std::max(MIN_HEIGHT, (dialScreenExtent + 46) * 100 / 18 + 1);
+    const int minH = std::max(MIN_HEIGHT, (dialScreenExtent + 46) * 100 / 18 + 1) + 5;
     const int w    = std::max(MIN_WIDTH, 600);
     viewRect.right  = viewRect.left + w;
     viewRect.bottom = viewRect.top  + minH;
@@ -85,11 +85,15 @@ void PluginView::initializeKnobs() {
     knobs.push_back({280, 200, KNOB_SIZE, 255, "Triangle",    2}); // kTriangleVolumeID
     knobs.push_back({380, 200, KNOB_SIZE, 255, "Saw",         3}); // kSawVolumeID
     knobs.push_back({480, 200, KNOB_SIZE,   0, "Sassiness",  11}); // kSassinessID
-    knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice",       4}); // kSpiceID
+    knobs.push_back({580, 200, KNOB_SIZE, 128, "Frassiness",  15}); // kFrassinessID
+    knobs.push_back({680, 200, KNOB_SIZE,   0, "Chattiness",  16}); // kChattinessID
+    knobs.push_back({300, 320, KNOB_SIZE, 128, "Spice",        4}); // kSpiceID
     knobs.push_back({450, 320, KNOB_SIZE,   0, "Squeeze",     7}); // kSqueezeID
     knobs.push_back({600, 320, KNOB_SIZE,   0, "Glide",       9}); // kGlideID
     knobs.push_back({750, 320, KNOB_SIZE,   0, "Distortion", 10}); // kDistortionID
-    knobs.push_back({900, 320, KNOB_SIZE,   0, "XOR Rand",   12}); // kXorRandID
+    knobs.push_back({900, 320, KNOB_SIZE,   0, "Static",     12}); // kXorRandID
+    knobs.push_back({  0, 320, KNOB_SIZE,   0, "Attack",     13}); // kAttackID
+    knobs.push_back({  0, 320, KNOB_SIZE,   0, "Release",    14}); // kReleaseID
 }
 
 #ifdef _WIN32  // ---- All rendering below is Windows/GDI+ only ----
@@ -422,8 +426,8 @@ void PluginView::updateLayout() {
     const int h = viewRect.bottom - viewRect.top;
     if (knobs.empty() || w <= 0 || h <= 0) return;
 
-    // Row 1: first 5 knobs, evenly spaced across full width
-    const int row1Count   = std::min(5, static_cast<int>(knobs.size()));
+    // Row 1: first 7 knobs, evenly spaced across full width
+    const int row1Count   = std::min(7, static_cast<int>(knobs.size()));
     const int row1Y       = h * 52 / 100;
     const int row1Spacing = w / (row1Count + 1);
     for (int i = 0; i < row1Count; ++i) {
@@ -530,7 +534,7 @@ void PluginView::drawWaveform() {
     if (knobs.size() < 4) return;
 
     const int w = viewRect.right  - viewRect.left;
-    const int h = viewRect.bottom - viewRect.top - 150;
+    const int h = knobs[0].y - KNOB_SIZE / 2 - 6;  // top of window to just above row-1 knobs
     if (w <= 0 || h <= 0) return;
 
     // Resize waveBuffer if needed; invalidate feedback on size change

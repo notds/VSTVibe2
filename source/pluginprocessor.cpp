@@ -10,6 +10,8 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <sstream>
+#include <cstdio>
 #ifdef _WIN32
 #include <objbase.h>
 #include <sapi.h>
@@ -24,21 +26,24 @@ namespace VSTVibe2 {
 // Each entry carries the word, Windows LCID (for SAPI), and BCP-47 tag (for macOS AVFoundation).
 struct ProfanityEntry { const wchar_t* word; const wchar_t* lcid; const char* bcp47; };
 
+// TODO - change spelling to work around TTS mispronunciations
+
 static const ProfanityEntry kProfanities[] = {
     // English (US)
     { L"fuck",             L"409", "en-US" }, { L"shit",            L"409", "en-US" },
     { L"bastard",          L"409", "en-US" }, { L"ass",             L"409", "en-US" },
-    { L"bollocks",         L"409", "en-US" }, { L"bloody hell",     L"409", "en-US" },
-    // Spanish
-    { L"mierda",           L"C0A", "es-MX" }, { L"coño",            L"C0A", "es-MX" },
-    { L"joder",            L"C0A", "es-MX" }, { L"cabrón",          L"C0A", "es-MX" },
+    { L"bollocks",         L"409", "en-US" }, { L"cunt",            L"409", "en-US" },
+    { L"ass clown",        L"409", "en-US" }, { L"knob jockey",     L"409", "en-US" },
+    // Spanish (accents removed for TTS compatibility)
+    { L"mierda",           L"C0A", "es-MX" }, { L"konyo",           L"C0A", "es-MX" },
+    { L"joder",            L"C0A", "es-MX" }, { L"cabron",          L"C0A", "es-MX" },
     { L"hostia",           L"C0A", "es-MX" }, { L"puta madre",      L"C0A", "es-MX" },
-    // French
+    // French (accents removed)
     { L"merde",            L"40C", "fr-FR" }, { L"putain",          L"40C", "fr-FR" },
     { L"con",              L"40C", "fr-FR" }, { L"bordel",          L"40C", "fr-FR" },
-    { L"sacré bleu",       L"40C", "fr-FR" },
-    // German
-    { L"Scheiße",          L"407", "de-DE" }, { L"verdammt",        L"407", "de-DE" },
+    { L"sacre bleu",       L"40C", "fr-FR" },
+    // German (umlauts/eszett removed)
+    { L"Scheisse",         L"407", "de-DE" }, { L"verdammt",        L"407", "de-DE" },
     { L"Arschloch",        L"407", "de-DE" }, { L"Mist",            L"407", "de-DE" },
     { L"Teufel",           L"407", "de-DE" },
     // Italian
@@ -50,8 +55,8 @@ static const ProfanityEntry kProfanities[] = {
     // Dutch
     { L"godverdomme",      L"413", "nl-NL" }, { L"klootzak",        L"413", "nl-NL" },
     { L"kut",              L"413", "nl-NL" }, { L"tering",          L"413", "nl-NL" },
-    // Swedish
-    { L"fan",              L"41D", "sv-SE" }, { L"jävlar",          L"41D", "sv-SE" },
+    // Swedish (umlauts removed)
+    { L"fan",              L"41D", "sv-SE" }, { L"javlar",          L"41D", "sv-SE" },
     { L"helvete",          L"41D", "sv-SE" }, { L"skit",            L"41D", "sv-SE" },
     // Finnish
     { L"perkele",          L"40B", "fi-FI" }, { L"saatana",         L"40B", "fi-FI" },
@@ -60,11 +65,15 @@ static const ProfanityEntry kProfanities[] = {
     { L"kurwa",            L"415", "pl-PL" }, { L"chuj",            L"415", "pl-PL" },
     { L"dupek",            L"415", "pl-PL" }, { L"psiakrew",        L"415", "pl-PL" },
     // Russian (romanized)
-    { L"blyad",            L"419", "ru-RU" }, { L"yebat",           L"419", "ru-RU" },
-    { L"suka",             L"419", "ru-RU" }, { L"khuy",            L"419", "ru-RU" },
+    { L"govno",            L"419", "ru-RU" }, { L"yebat",           L"419", "ru-RU" },
+    { L"suka blat",        L"419", "ru-RU" }, { L"idi nah hoy",     L"419", "ru-RU" },
     // Japanese (romanized)
     { L"kuso",             L"411", "ja-JP" }, { L"chikusho",        L"411", "ja-JP" },
     { L"kichiku",          L"411", "ja-JP" }, { L"shimatta",        L"411", "ja-JP" },
+    // Jamaican
+    { L"bumbo clot",       L"358", "en-JM" }, { L"raas clot",       L"358", "en-JM" },
+    { L"pussy clot",       L"358", "en-JM" }, { L"blood clot",      L"358", "en-JM" },
+    { L"suck yuh mother",  L"358", "en-JM" }, { L"batty boy",       L"358", "en-JM" },
     // Chinese Simplified (romanized)
     { L"ta ma de",         L"804", "zh-CN" }, { L"wo cao",          L"804", "zh-CN" },
     { L"sha bi",           L"804", "zh-CN" },
@@ -78,7 +87,7 @@ static const ProfanityEntry kProfanities[] = {
     { L"malaka",           L"408", "el-GR" }, { L"poutana",         L"408", "el-GR" },
     { L"skatos",           L"408", "el-GR" },
     // Hindi (romanized)
-    { L"bhenchod",         L"439", "hi-IN" }, { L"madarchod",       L"439", "hi-IN" },
+    { L"bhenchod",         L"439", "hi-IN" }, { L"mardarchode",     L"439", "hi-IN" },
     { L"chutiya",          L"439", "hi-IN" },
     // Turkish
     { L"siktir",           L"41F", "tr-TR" }, { L"orospu",          L"41F", "tr-TR" },
@@ -89,8 +98,8 @@ static const ProfanityEntry kProfanities[] = {
     // Czech
     { L"kurva",            L"405", "cs-CZ" }, { L"hovno",           L"405", "cs-CZ" },
     { L"pica",             L"405", "cs-CZ" },
-    // Norwegian
-    { L"faen",             L"414", "nb-NO" }, { L"jævla",           L"414", "nb-NO" },
+    // Norwegian (ligatures removed)
+    { L"faen",             L"414", "nb-NO" }, { L"jaevla",          L"414", "nb-NO" },
     { L"kukk",             L"414", "nb-NO" },
     // Romanian
     { L"pula",             L"418", "ro-RO" }, { L"futu i",          L"418", "ro-RO" },
@@ -250,11 +259,102 @@ static std::vector<float> renderTTSWord(const ProfanityEntry& entry, float targe
 }
 
 #else  // !_WIN32
+#include <dlfcn.h>
 #include "tts_mac.h"
 static std::vector<float> renderTTSWord(const ProfanityEntry& entry, float sr) {
     return renderTTSWordMac(entry.word, entry.bcp47, sr);
 }
 #endif  // _WIN32
+
+// ---- Custom word list loaded from MONODUCKWORDS.TXT ----
+static std::vector<std::wstring>   s_customWordStorage;
+static std::vector<ProfanityEntry> s_customProfanities;
+static bool                        s_useCustomWords = false;
+static std::once_flag              s_wordFileOnce;
+
+static void loadCustomWordFile() {
+    // Locate the directory that contains this plugin binary
+    std::wstring dir;
+#ifdef _WIN32
+    HMODULE hMod = nullptr;
+    GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(static_cast<void*>(&loadCustomWordFile)),
+        &hMod);
+    if (hMod) {
+        wchar_t buf[MAX_PATH] = {};
+        GetModuleFileNameW(hMod, buf, MAX_PATH);
+        std::wstring full(buf);
+        const auto sep = full.rfind(L'\\');
+        dir = (sep != std::wstring::npos) ? full.substr(0, sep + 1) : L".\\";
+    }
+#else
+    Dl_info dlInfo{};
+    if (dladdr(reinterpret_cast<void*>(&loadCustomWordFile), &dlInfo) && dlInfo.dli_fname) {
+        std::string p(dlInfo.dli_fname);
+        const auto sep = p.rfind('/');
+        std::string narrow = (sep != std::string::npos) ? p.substr(0, sep + 1) : "./";
+        dir.assign(narrow.begin(), narrow.end());
+    }
+#endif
+    if (dir.empty()) return;
+
+    const std::wstring filePath       = dir + L"MONODUCKWORDS.TXT";
+    const std::string  defaultContent = "Edit this file to customize word phrases. Put each on a new line";
+
+    // Open existing file
+#ifdef _WIN32
+    FILE* f = nullptr;
+    _wfopen_s(&f, filePath.c_str(), L"rb");
+#else
+    std::string narrowPath(filePath.begin(), filePath.end());
+    FILE* f = fopen(narrowPath.c_str(), "rb");
+#endif
+
+    if (!f) {
+        // Create default placeholder
+#ifdef _WIN32
+        FILE* fw = nullptr;
+        _wfopen_s(&fw, filePath.c_str(), L"wb");
+#else
+        FILE* fw = fopen(narrowPath.c_str(), "wb");
+#endif
+        if (fw) {
+            fwrite(defaultContent.c_str(), 1, defaultContent.size(), fw);
+            fclose(fw);
+        }
+        return;
+    }
+
+    // Read full file
+    fseek(f, 0, SEEK_END);
+    const long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::string content(static_cast<size_t>(sz > 0 ? sz : 0), '\0');
+    if (sz > 0) fread(&content[0], 1, static_cast<size_t>(sz), f);
+    fclose(f);
+
+    // If it's still the unedited placeholder, use the built-in list
+    if (content == defaultContent) return;
+
+    // Parse lines into custom word storage
+    std::istringstream iss(content);
+    std::string line;
+    while (std::getline(iss, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            line.pop_back();
+        if (line.empty()) continue;
+        s_customWordStorage.emplace_back(line.begin(), line.end());
+    }
+    if (s_customWordStorage.empty()) return;
+
+    // Build ProfanityEntry pointers into the stable storage vector
+    s_customProfanities.reserve(s_customWordStorage.size());
+    for (const auto& w : s_customWordStorage)
+        s_customProfanities.push_back({ w.c_str(), L"409", "en-US" });
+
+    s_useCustomWords = true;
+}
 
 VSTVibe2Processor::~VSTVibe2Processor() {
     if (ttsThread.joinable()) ttsThread.join();
@@ -269,6 +369,8 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::initialize(Steinberg::FUnknown*
     if (result != Steinberg::kResultOk) {
         return result;
     }
+
+    std::call_once(s_wordFileOnce, loadCustomWordFile);
 
     addEventInput(STR16("MIDI Input"), 1);
     addAudioOutput(STR16("Stereo Out"), Steinberg::Vst::SpeakerArr::kStereo);
@@ -361,6 +463,20 @@ static float applyDistortion(float sample, float amount, float noiseEnv) {
     return out;
 }
 
+// Strips leading and trailing silence.  Fade-in/out is handled at mix time
+// (output-sample domain) so pitch-shifting never skips over the ramp.
+static void trimSilence(std::vector<float>& buf, float threshold = 0.008f) {
+    if (buf.empty()) return;
+    size_t first = 0;
+    while (first < buf.size() && std::abs(buf[first]) < threshold) ++first;
+    size_t last = buf.size();
+    while (last > first && std::abs(buf[last - 1]) < threshold) --last;
+    if (first >= last) { buf.clear(); return; }
+    buf.erase(buf.begin() + static_cast<std::ptrdiff_t>(last), buf.end());
+    if (first > 0)
+        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(first));
+}
+
 float VSTVibe2Processor::mixOscillators(double phaseVal) {
     float sine     = generateSineWave(phaseVal)     * oscillatorVolumes[0];
     float square   = generateSquareWave(phaseVal)   * oscillatorVolumes[1];
@@ -390,8 +506,12 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
             else if (id == 7)  { squeeze    = static_cast<float>(value); }
             else if (id == 9)  { glide      = static_cast<float>(value); }
             else if (id == 10) { distortion = static_cast<float>(value); }
-            else if (id == 11) { sassiness  = static_cast<float>(value); }
+            else if (id == 11) { sassiness   = static_cast<float>(value); }
+            else if (id == 15) { frassiness   = static_cast<float>(value); }
+            else if (id == 16) { chattiness   = static_cast<float>(value); }
             else if (id == 12) { xorRand   = static_cast<float>(value); }
+            else if (id == 13) { attack    = static_cast<float>(value); }
+            else if (id == 14) { release   = static_cast<float>(value); }
             else if (id == 5) {
                 pitchBendSemitones = (static_cast<float>(value) - 0.5f) * 24.0f;
             }
@@ -449,8 +569,8 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
                     if (noteActive) {
                         noteActive = false;
                         noteStateChanged = true;
-                        // Stop TTS playback immediately
-                        ttsReadPos = static_cast<double>(ttsBuffer.size());
+                        ttsReadPos           = static_cast<double>(ttsBuffer.size());
+                        ttsSilenceRemaining  = 0.0;  // next note-on plays immediately
                     }
                 } else {
                     // Return to most recently pressed still-held note
@@ -493,7 +613,11 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
     const float pitchBendMult  = std::pow(2.0f, pitchBendSemitones / 12.0f);
     const float cAtk           = std::exp(-1.0f / (sampleRate * 0.010f));
     const float cRel           = std::exp(-1.0f / (sampleRate * 0.150f));
-    const float noiseRelCoeff  = std::exp(-1.0f / (sampleRate * 0.150f));  // 150 ms release
+    const float noiseRelCoeff  = std::exp(-1.0f / (sampleRate * 0.150f));
+    const float ampAtkCoeff    = std::exp(-1.0f / (sampleRate * std::max(0.001f, attack * 2.0f)));
+    const float ampRelCoeff    = std::exp(-1.0f / (sampleRate * (0.010f + release * 2.990f)));
+    // frassiness 0.5 = default pitch, 0.0 = -2 oct, 1.0 = +2 oct
+    const float ttsBasePitch   = kTTSBasePitch * std::pow(2.0f, (frassiness - 0.5f) * 4.0f);
 
     for (Steinberg::int32 sample = 0; sample < numSamples; ++sample) {
         if (portamentoSamples > 0) {
@@ -506,48 +630,69 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
         float sampleValue = 0.0f;
 
         if (noteActive) {
-            sampleValue = mixOscillators(phase) * currentVelocity;
+            ampEnv = ampAtkCoeff * ampEnv + (1.0f - ampAtkCoeff);  // toward 1
+            noiseEnv = 1.0f;
+        } else {
+            ampEnv   *= ampRelCoeff;
+            noiseEnv *= noiseRelCoeff;
+        }
+
+        if (ampEnv > 1e-4f) {
+            sampleValue = mixOscillators(phase) * currentVelocity * ampEnv;
             sampleValue = applyMandelbrot(sampleValue, spice, mandelbrotState);
             phase += effectiveFrequency / sampleRate;
             if (phase >= 1.0) phase -= 1.0;
-            noiseEnv = 1.0f;  // Instant attack
-        } else {
-            noiseEnv *= noiseRelCoeff;  // Exponential decay on release
         }
 
         sampleValue = applyCompressor(sampleValue, squeeze, compressorEnv, cAtk, cRel);
 
-        // TTS: swap in new buffer if ready
-        if (ttsPendingReady.load(std::memory_order_acquire)) {
-            ttsBuffer  = std::move(ttsPending);
-            ttsReadPos = 0.0;
-            ttsPendingReady.store(false, std::memory_order_release);
-        }
-
         if (sassiness > 1e-4f && noteActive) {
             const size_t ttsIdx = static_cast<size_t>(ttsReadPos);
 
-            // Auto-retrigger: start next word as soon as current one ends
-            if (ttsIdx >= ttsBuffer.size()
-                && !ttsPendingReady.load(std::memory_order_acquire)
-                && !ttsRunning.exchange(true, std::memory_order_acq_rel)) {
+            // Arm silence gap the moment a word finishes (ttsSilenceRemaining == -1 means
+            // "not yet armed for this gap"). 100% chattiness = 0 s gap, 0% = 10 s gap.
+            if (ttsIdx >= ttsBuffer.size() && ttsSilenceRemaining < 0.0)
+                ttsSilenceRemaining = static_cast<double>(1.0f - chattiness) * 10.0 * sampleRate;
+
+            // Count down the gap
+            if (ttsSilenceRemaining > 0.0)
+                ttsSilenceRemaining -= 1.0;
+
+            // Swap pre-rendered word in once silence has elapsed
+            if (ttsIdx >= ttsBuffer.size() && ttsSilenceRemaining <= 0.0
+                    && ttsPendingReady.load(std::memory_order_acquire)) {
+                ttsBuffer           = std::move(ttsPending);
+                ttsReadPos          = 0.0;
+                ttsWordFadeIn       = 441;   // 10 ms fade-in in output-sample time
+                ttsSilenceRemaining = -1.0;
+                ttsPendingReady.store(false, std::memory_order_release);
+            }
+
+            // Pre-render next word in background whenever nothing is queued or rendering.
+            // This runs as soon as the current word starts, hiding latency entirely.
+            if (!ttsPendingReady.load(std::memory_order_acquire)
+                    && !ttsRunning.exchange(true, std::memory_order_acq_rel)) {
                 if (ttsThread.joinable()) ttsThread.join();
                 const float sr = sampleRate;
                 ttsThread = std::thread([this, sr]() {
-                    // Shuffle bag: all indices in random order; refill+reshuffle when empty.
-                    // Reseed with nanosecond time each cycle for fresh entropy.
                     static std::vector<int> s_bag;
-                    static int              s_lastIdx = -1;
+                    static int              s_lastIdx    = -1;
+                    static int              s_lastListSz = -1;
 
                     using clock = std::chrono::high_resolution_clock;
                     const auto t = clock::now().time_since_epoch().count();
                     std::mt19937 rng(static_cast<uint32_t>(t ^ (t >> 32)));
 
-                    if (s_bag.empty()) {
-                        s_bag.resize(kProfanitiesCount);
+                    const bool            useCustom = s_useCustomWords && !s_customProfanities.empty();
+                    const int             listSize  = useCustom ? static_cast<int>(s_customProfanities.size())
+                                                                : kProfanitiesCount;
+                    const ProfanityEntry* list      = useCustom ? s_customProfanities.data() : kProfanities;
+
+                    if (s_bag.empty() || s_lastListSz != listSize) {
+                        s_lastListSz = listSize;
+                        s_bag.resize(listSize);
                         std::iota(s_bag.begin(), s_bag.end(), 0);
                         std::shuffle(s_bag.begin(), s_bag.end(), rng);
-                        // Ensure the first draw never repeats the previous word
                         if (s_bag.back() == s_lastIdx && s_bag.size() > 1)
                             std::swap(s_bag.back(), s_bag[rng() % (s_bag.size() - 1)]);
                     }
@@ -555,22 +700,37 @@ Steinberg::tresult PLUGIN_API VSTVibe2Processor::process(Steinberg::Vst::Process
                     s_bag.pop_back();
                     s_lastIdx = widx;
 
-                    auto buf = renderTTSWord(kProfanities[widx], sr);
+                    auto buf = renderTTSWord(list[widx], sr);
+                    trimSilence(buf);
                     ttsPending     = std::move(buf);
                     ttsPendingReady.store(true,  std::memory_order_release);
                     ttsRunning.store(false, std::memory_order_release);
                 });
             }
 
-            // Mix with pitch-shift: advance ttsReadPos by freq/basePitch per output sample
+            // Mix with pitch-shift
             if (ttsIdx < ttsBuffer.size()) {
                 const float  frac = static_cast<float>(ttsReadPos - ttsIdx);
                 const float  s0   = ttsBuffer[ttsIdx];
                 const float  s1   = ttsIdx + 1 < ttsBuffer.size() ? ttsBuffer[ttsIdx + 1] : 0.0f;
-                sampleValue += (s0 + frac * (s1 - s0)) * sassiness;
+
+                // Output-domain fade-in: ramps 0→1 over 10ms regardless of pitch ratio
+                float ttsEnvGain = 1.0f;
+                if (ttsWordFadeIn > 0) {
+                    ttsEnvGain = 1.0f - static_cast<float>(ttsWordFadeIn) / 441.0f;
+                    --ttsWordFadeIn;
+                }
+                // Output-domain fade-out: ramp 1→0 over last 10ms of buffer
+                constexpr size_t kFadeOut = 441;
+                if (ttsBuffer.size() > kFadeOut * 2 && ttsIdx + kFadeOut >= ttsBuffer.size()) {
+                    const size_t samplesLeft = ttsBuffer.size() - ttsIdx;
+                    ttsEnvGain *= static_cast<float>(samplesLeft) / static_cast<float>(kFadeOut);
+                }
+
+                sampleValue += (s0 + frac * (s1 - s0)) * sassiness * ttsEnvGain;
 
                 const double pitchRatio = effectiveFrequency > 0.0f
-                    ? static_cast<double>(effectiveFrequency) / kTTSBasePitch : 1.0;
+                    ? static_cast<double>(effectiveFrequency) / ttsBasePitch : 1.0;
                 ttsReadPos += pitchRatio;
             }
         }

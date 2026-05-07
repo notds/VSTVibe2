@@ -44,7 +44,19 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::initialize(Steinberg::FUnknown
         STR16("Sassiness"), kSassinessID, STR16("%"), 0.0, 1.0, 0.0));
 
     parameters.addParameter(new Steinberg::Vst::RangeParameter(
-        STR16("XOR Rand"), kXorRandID, STR16("%"), 0.0, 1.0, 0.0));
+        STR16("Static"), kXorRandID, STR16("%"), 0.0, 1.0, 0.0));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Frassiness"), kFrassinessID, STR16("st"), 0.0, 1.0, 0.5));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Chattiness"), kChattinessID, STR16("s"), 0.0, 1.0, 0.0));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Attack"), kAttackID, STR16("s"), 0.0, 1.0, 0.0));
+
+    parameters.addParameter(new Steinberg::Vst::RangeParameter(
+        STR16("Release"), kReleaseID, STR16("s"), 0.0, 1.0, 0.0));
 
     parameters.addParameter(new Steinberg::Vst::RangeParameter(
         STR16("Note Active"), kNoteActiveID, STR16(""), 0.0, 1.0, 0.0));
@@ -79,16 +91,24 @@ Steinberg::tresult PLUGIN_API VSTVibe2Controller::setParamNormalized(Steinberg::
             pluginView->setNoteActive(value > 0.5);
         } else if (tag == kSassinessID) {
             pluginView->setKnobValue(4, static_cast<int>(value * 255.0));
-        } else if (tag == kSpiceID) {
+        } else if (tag == kFrassinessID) {
             pluginView->setKnobValue(5, static_cast<int>(value * 255.0));
-        } else if (tag == kSqueezeID) {
+        } else if (tag == kChattinessID) {
             pluginView->setKnobValue(6, static_cast<int>(value * 255.0));
-        } else if (tag == kGlideID) {
+        } else if (tag == kSpiceID) {
             pluginView->setKnobValue(7, static_cast<int>(value * 255.0));
-        } else if (tag == kDistortionID) {
+        } else if (tag == kSqueezeID) {
             pluginView->setKnobValue(8, static_cast<int>(value * 255.0));
-        } else if (tag == kXorRandID) {
+        } else if (tag == kGlideID) {
             pluginView->setKnobValue(9, static_cast<int>(value * 255.0));
+        } else if (tag == kDistortionID) {
+            pluginView->setKnobValue(10, static_cast<int>(value * 255.0));
+        } else if (tag == kXorRandID) {
+            pluginView->setKnobValue(11, static_cast<int>(value * 255.0));
+        } else if (tag == kAttackID) {
+            pluginView->setKnobValue(12, static_cast<int>(value * 255.0));
+        } else if (tag == kReleaseID) {
+            pluginView->setKnobValue(13, static_cast<int>(value * 255.0));
         }
     }
     return result;
